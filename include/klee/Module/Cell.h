@@ -11,12 +11,14 @@
 #define KLEE_CELL_H
 
 #include "klee/Expr/Expr.h"
+#include "klee/Taint/Taint.h"
 
 namespace klee {
   class MemoryObject;
 
   struct Cell {
     ref<Expr> value;
+    TaintSet taint;
   };
 }
 

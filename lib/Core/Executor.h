@@ -28,6 +28,7 @@
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
 #include "klee/System/Time.h"
+#include "klee/Taint/Taint.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -242,7 +243,7 @@ private:
   void callExternalFunction(ExecutionState &state,
                             KInstruction *target,
                             KCallable *callable,
-                            std::vector< ref<Expr> > &arguments);
+                            std::vector< std::pair< ref<Expr>, TaintSet > > &arguments);
 
   ObjectState *bindObjectInState(ExecutionState &state, const MemoryObject *mo,
                                  bool isLocal, const Array *array = 0);
@@ -311,7 +312,7 @@ private:
   void executeCall(ExecutionState &state, 
                    KInstruction *ki,
                    llvm::Function *f,
-                   std::vector< ref<Expr> > &arguments);
+                   std::vector< std::pair< ref<Expr>, TaintSet > > &arguments);
                    
   // do address resolution / object binding / out of bounds checking
   // and perform the operation
@@ -319,7 +320,8 @@ private:
                               bool isWrite,
                               ref<Expr> address,
                               ref<Expr> value /* undef if read */,
-                              KInstruction *target /* undef if write */);
+                              KInstruction *target /* undef if write */,
+                              TaintSet ts = 0);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
                            const std::string &name);
@@ -367,11 +369,13 @@ private:
 
   void bindLocal(KInstruction *target, 
                  ExecutionState &state, 
-                 ref<Expr> value);
+                 ref<Expr> value,
+                 TaintSet ts = 0);
   void bindArgument(KFunction *kf, 
                     unsigned index,
                     ExecutionState &state,
-                    ref<Expr> value);
+                    ref<Expr> value,
+                    TaintSet ts = 0);
 
   /// Evaluates an LLVM constant expression.  The optional argument ki
   /// is the instruction where this constant was encountered, or NULL

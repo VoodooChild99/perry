@@ -125,6 +125,11 @@ ObjectState::ObjectState(const ObjectState &os)
   }
 
   memcpy(concreteStore, os.concreteStore, size*sizeof(*concreteStore));
+
+  if (os.taints) {
+    taints = new TaintSet[size];
+    memcpy(taints, os.taints, size * sizeof(*taints));
+  }
 }
 
 ObjectState::~ObjectState() {
@@ -132,6 +137,11 @@ ObjectState::~ObjectState() {
   delete unflushedMask;
   delete[] knownSymbolics;
   delete[] concreteStore;
+
+  if (taints) {
+    delete[] taints;
+    taints = nullptr;
+  }
 }
 
 ArrayCache *ObjectState::getArrayCache() const {
@@ -587,5 +597,27 @@ void ObjectState::print() const {
   llvm::errs() << "\tUpdates:\n";
   for (const auto *un = updates.head.get(); un; un = un->next.get()) {
     llvm::errs() << "\t\t[" << un->index << "] = " << un->value << "\n";
+  }
+}
+
+void ObjectState::writeTaint(unsigned offset, TaintSet ts) {
+  if (!taints) {
+    if (!isTainted(ts)) {
+      return;
+    }
+
+    taints = new TaintSet[size];
+    memset(taints, NO_TAINT, size * sizeof(*taints));
+  }
+
+  taints[offset] = ts;
+}
+
+
+TaintSet ObjectState::readTaint(unsigned offset) const {
+  if (!taints) {
+    return NO_TAINT;
+  } else {
+    return taints[offset];
   }
 }

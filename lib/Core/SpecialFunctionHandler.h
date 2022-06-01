@@ -144,6 +144,12 @@ namespace klee {
     HANDLER(handleUnderConstrained);
     HANDLER(handleWarning);
     HANDLER(handleWarningOnce);
+    HANDLER(handleAddOverflow);
+    HANDLER(handleMulOverflow);
+    HANDLER(handleSubOverflow);
+    HANDLER(handleDivRemOverflow);
+    HANDLER(handleSetTaint);
+    HANDLER(handleGetTaint);
 #undef HANDLER
   };
 } // End klee namespace

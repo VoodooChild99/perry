@@ -63,6 +63,17 @@ using namespace llvm;
 using namespace klee;
 
 namespace {
+  cl::opt<Interpreter::TaintOption::Option>
+  Taint("taint",
+        cl::desc("Taint tracking (default=none)"),
+        cl::values(clEnumValN(Interpreter::TaintOption::NoTaint,
+                              "none",
+                              "Don't do taint tracking (default)"),
+                   clEnumValN(Interpreter::TaintOption::DirectTaint,
+                              "direct",
+                              "Vanilla taint tracking")),
+        cl::init(Interpreter::TaintOption::NoTaint));
+
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
 
@@ -1379,6 +1390,22 @@ int main(int argc, char **argv, char **envp) {
   }
 
   Interpreter::InterpreterOptions IOpts;
+
+  switch (Taint)
+  {
+    case Interpreter::TaintOption::NoTaint:
+      klee_message("Disable taint tracking");
+      break;
+    case Interpreter::TaintOption::DirectTaint:
+      klee_message("Enable taint tracking, mode: DIRECT");
+      break;
+    default:
+      klee_warning("Unresolved taint option, default to NoTaint");
+      Taint = Interpreter::TaintOption::NoTaint;
+      break;
+  }
+  IOpts.TaintOpt = Interpreter::TaintOption(Taint);
+
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
   KleeHandler *handler = new KleeHandler(pArgc, pArgv);
   Interpreter *interpreter =

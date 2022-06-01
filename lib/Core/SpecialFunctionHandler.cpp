@@ -139,6 +139,16 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   // operator new(unsigned long)
   add("_Znwm", handleNew, true),
 
+  // Run clang with -fsanitize=signed-integer-overflow and/or
+  // -fsanitize=unsigned-integer-overflow
+  add("__ubsan_handle_add_overflow", handleAddOverflow, false),
+  add("__ubsan_handle_sub_overflow", handleSubOverflow, false),
+  add("__ubsan_handle_mul_overflow", handleMulOverflow, false),
+  add("__ubsan_handle_divrem_overflow", handleDivRemOverflow, false),
+
+  add("klee_set_taint", handleSetTaint, false),
+  add("klee_get_taint", handleGetTaint, true),
+
 #undef addDNR
 #undef add
 };
@@ -869,5 +879,134 @@ void SpecialFunctionHandler::handleMarkGlobal(ExecutionState &state,
     const MemoryObject *mo = it->first.first;
     assert(!mo->isLocal);
     mo->isGlobal = true;
+  }
+}
+
+void SpecialFunctionHandler::handleAddOverflow(
+    ExecutionState &state, KInstruction *target,
+    std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(state, "overflow on addition",
+                                 StateTerminationType::Overflow);
+}
+
+void SpecialFunctionHandler::handleSubOverflow(
+    ExecutionState &state, KInstruction *target,
+    std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(state, "overflow on subtraction",
+                                 StateTerminationType::Overflow);
+}
+
+void SpecialFunctionHandler::handleMulOverflow(
+    ExecutionState &state, KInstruction *target,
+    std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(state, "overflow on multiplication",
+                                 StateTerminationType::Overflow);
+}
+
+void SpecialFunctionHandler::handleDivRemOverflow(
+    ExecutionState &state, KInstruction *target,
+    std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(state, "overflow on division or remainder",
+                                 StateTerminationType::Overflow);
+}
+
+
+// void klee_set_taint(i32 taint, i8 *addr, i32 size)
+void SpecialFunctionHandler::handleSetTaint(ExecutionState &state,
+                                            KInstruction *target,
+                                            std::vector<ref<Expr>> &arguments)
+{
+  if (arguments.size() != 3) {
+    executor.terminateStateOnUserError(state,
+        "Incorrect number of arguments to klee_set_taint(size_t, void*, size_t)");
+    return;
+  }
+
+  ref<Expr> taint = arguments[0];
+  ref<Expr> address = arguments[1];
+  ref<Expr> size = arguments[2];
+
+  klee::ConstantExpr *CE = dyn_cast<ConstantExpr>(taint);
+  if (!CE) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint is not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_size = dyn_cast<ConstantExpr>(size);
+  if (!CE_size) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint size not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_addr = dyn_cast<ConstantExpr>(address);
+  if (!CE_addr) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint address not supported");
+    return;
+  }
+
+  ObjectPair op;
+  if (state.addressSpace.resolveOne(CE_addr, op)) {
+    const MemoryObject *mo = op.first;
+    ObjectState *os = const_cast<ObjectState*>(op.second);
+    // ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+
+    unsigned int taint_size = CE_size->getZExtValue();
+    TaintSet ts = CE->getZExtValue();
+    uint64_t offset = CE_addr->getZExtValue() - mo->address;
+    for (unsigned i = 0; i < taint_size; ++i) {
+      os->writeTaint(i + offset, ts);
+    }
+  } else {
+    executor.terminateStateOnUserError(state,
+        "Cannot resolve the address to be tainted");
+    return;
+  }
+}
+
+// i32 klee_get_taint(i8 *addr, i32 size)
+void SpecialFunctionHandler::handleGetTaint(ExecutionState &state,
+                                            KInstruction *target,
+                                            std::vector<ref<Expr>> &arguments)
+{
+  if (arguments.size() != 2) {
+    executor.terminateStateOnUserError(state,
+        "Incorrect number of arguments to klee_set_taint(size_t, void*, size_t)");
+    return;
+  }
+
+  ref<Expr> address = arguments[0];
+  ref<Expr> size = arguments[1];
+
+  klee::ConstantExpr *CE_size = dyn_cast<ConstantExpr>(size);
+  if (!CE_size) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint size not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_addr = dyn_cast<ConstantExpr>(address);
+  if (!CE_addr) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint address not supported");
+    return;
+  }
+
+  ObjectPair op;
+  if (state.addressSpace.resolveOne(CE_addr, op)) {
+    const MemoryObject *mo = op.first;
+    const ObjectState *os = op.second;
+    // ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+
+    unsigned int taint_size = CE_size->getZExtValue();
+    TaintSet ts = 0;
+    uint64_t offset = CE_addr->getZExtValue() - mo->address;
+    for (unsigned i = 0; i < taint_size; ++i) {
+      mergeTaint(ts, os->readTaint(i + offset));
+    }
+    executor.bindLocal(target, state, ConstantExpr::create(ts, Expr::Int32));
+  } else {
+    executor.terminateStateOnUserError(state,
+        "Cannot resolve the address to get taint from");
+    return;
   }
 }

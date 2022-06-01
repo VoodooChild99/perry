@@ -75,6 +75,21 @@ public:
 	  SMTLIB2 //.SMT2 files (SMTLIB version 2 files)
   };
 
+  class TaintOption {
+  public:
+    enum Option {
+      NoTaint = 0,
+      DirectTaint
+    };
+  private:
+    Option opt;
+  public:
+    TaintOption(Option opt): opt(opt) {}
+    bool match(Option o) const {
+      return (o <= opt);
+    }
+  };
+
   /// InterpreterOptions - Options varying the runtime behavior during
   /// interpretation.
   struct InterpreterOptions {
@@ -82,9 +97,10 @@ public:
     /// symbolic values. This is used to test the correctness of the
     /// symbolic execution on concrete programs.
     unsigned MakeConcreteSymbolic;
+    TaintOption TaintOpt;
 
     InterpreterOptions()
-      : MakeConcreteSymbolic(false)
+      : MakeConcreteSymbolic(false), TaintOpt(TaintOption::Option::NoTaint)
     {}
   };
 

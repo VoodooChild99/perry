@@ -14,6 +14,7 @@
 #include "TimingSolver.h"
 
 #include "klee/Expr/Expr.h"
+#include "klee/Taint/Taint.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -189,6 +190,9 @@ private:
   // mutable because we may need flush during read of const
   mutable UpdateList updates;
 
+  // concrete taints
+  TaintSet *taints = nullptr;
+
 public:
   unsigned size;
 
@@ -229,6 +233,9 @@ public:
   void write32(unsigned offset, uint32_t value);
   void write64(unsigned offset, uint64_t value);
   void print() const;
+
+  void writeTaint(unsigned offset, TaintSet ts);
+  TaintSet readTaint(unsigned offset) const;
 
   /*
     Looks at all the symbolic bytes of this object, gets a value for them

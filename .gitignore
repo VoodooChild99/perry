@@ -34,3 +34,4 @@ autom4te.cache/
 play-with-klee
 .gdb_history
 .vscode
+.cache
