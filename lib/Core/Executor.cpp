@@ -2219,7 +2219,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // FIXME: Find a way that we don't have this hidden dependency.
       assert(bi->getCondition() == bi->getOperand(0) &&
              "Wrong operand index!");
-      ref<Expr> cond = eval(ki, 0, state).value;
+      Cell cell = eval(ki, 0, state);
+      ref<Expr> cond = cell.value;
 
       cond = optimizer.optimizeExpr(cond, false);
       Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch);
@@ -2230,6 +2231,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // up with convenient instruction specific data.
       if (statsTracker && state.stack.back().kf->trackCoverage)
         statsTracker->markBranchVisited(branches.first, branches.second);
+      
+      if (interpreterOpts.CollectTaintedCond) {
+        TaintSet ts = cell.taint;
+        if (isTainted(ts)) {
+          mergeTaint(taintedCond, ts);
+        }
+      }
 
       if (branches.first)
         transferToBasicBlock(bi->getSuccessor(0), bi->getParent(), *branches.first);

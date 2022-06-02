@@ -74,6 +74,11 @@ namespace {
                               "Vanilla taint tracking")),
         cl::init(Interpreter::TaintOption::NoTaint));
 
+  cl::opt<bool>
+  CollectTaintedCond("collect-state-var",
+                     cl::init(false),
+                     cl::desc("State Variable Collection (default=false)"));
+
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
 
@@ -1405,6 +1410,7 @@ int main(int argc, char **argv, char **envp) {
       break;
   }
   IOpts.TaintOpt = Interpreter::TaintOption(Taint);
+  IOpts.CollectTaintedCond = CollectTaintedCond;
 
   IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
   KleeHandler *handler = new KleeHandler(pArgc, pArgv);

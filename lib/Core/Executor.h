@@ -210,6 +210,9 @@ private:
   /// Typeids used during exception handling
   std::vector<ref<Expr>> eh_typeids;
 
+  // a set of taints that occur in the condition of a branch
+  TaintSet taintedCond;
+
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 

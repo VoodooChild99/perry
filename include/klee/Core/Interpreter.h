@@ -98,6 +98,7 @@ public:
     /// symbolic execution on concrete programs.
     unsigned MakeConcreteSymbolic;
     TaintOption TaintOpt;
+    bool CollectTaintedCond;
 
     InterpreterOptions()
       : MakeConcreteSymbolic(false), TaintOpt(TaintOption::Option::NoTaint)
