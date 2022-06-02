@@ -6,12 +6,17 @@
 # License. See LICENSE.TXT for details.
 #
 #===------------------------------------------------------------------------===#
-add_subdirectory(ktest-gen)
-add_subdirectory(ktest-randgen)
-add_subdirectory(kleaver)
-add_subdirectory(klee)
-add_subdirectory(klee-replay)
-add_subdirectory(klee-stats)
-add_subdirectory(klee-zesti)
-add_subdirectory(ktest-tool)
-add_subdirectory(perry)
+add_executable(perry
+  main.cpp
+)
+
+set(KLEE_LIBS
+  kleeCore
+)
+
+target_link_libraries(perry ${KLEE_LIBS})
+
+install(TARGETS perry RUNTIME DESTINATION bin)
+
+# The KLEE binary depends on the runtimes
+add_dependencies(perry BuildKLEERuntimes)
