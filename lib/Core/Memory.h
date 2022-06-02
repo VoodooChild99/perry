@@ -234,8 +234,8 @@ public:
   void write64(unsigned offset, uint64_t value);
   void print() const;
 
-  void writeTaint(unsigned offset, TaintSet ts);
-  TaintSet readTaint(unsigned offset) const;
+  void writeTaint(unsigned offset, TaintSet& ts);
+  TaintSet* readTaint(unsigned offset) const;
 
   /*
     Looks at all the symbolic bytes of this object, gets a value for them

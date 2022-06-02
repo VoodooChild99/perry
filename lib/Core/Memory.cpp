@@ -128,7 +128,9 @@ ObjectState::ObjectState(const ObjectState &os)
 
   if (os.taints) {
     taints = new TaintSet[size];
-    memcpy(taints, os.taints, size * sizeof(*taints));
+    for (unsigned i = 0; i < size; ++i) {
+      taints[i] = os.taints[i];
+    }
   }
 }
 
@@ -600,24 +602,23 @@ void ObjectState::print() const {
   }
 }
 
-void ObjectState::writeTaint(unsigned offset, TaintSet ts) {
+void ObjectState::writeTaint(unsigned offset, TaintSet& ts) {
   if (!taints) {
     if (!isTainted(ts)) {
       return;
     }
 
     taints = new TaintSet[size];
-    memset(taints, NO_TAINT, size * sizeof(*taints));
   }
 
   taints[offset] = ts;
 }
 
 
-TaintSet ObjectState::readTaint(unsigned offset) const {
+TaintSet* ObjectState::readTaint(unsigned offset) const {
   if (!taints) {
-    return NO_TAINT;
+    return nullptr;
   } else {
-    return taints[offset];
+    return &taints[offset];
   }
 }

@@ -149,6 +149,8 @@ namespace klee {
     HANDLER(handleSubOverflow);
     HANDLER(handleDivRemOverflow);
     HANDLER(handleSetTaint);
+    HANDLER(handleHasTaint);
+    HANDLER(handleGetTaintNum);
     HANDLER(handleGetTaint);
 #undef HANDLER
   };

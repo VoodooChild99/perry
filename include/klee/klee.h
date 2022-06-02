@@ -18,7 +18,9 @@ extern "C" {
 #endif
 
   void klee_set_taint(unsigned int taint, void* buffer, size_t size);
-  unsigned int klee_get_taint(void* buffer, size_t size);
+  uint8_t klee_has_taint(void* buffer, size_t size, unsigned int taint);
+  uint32_t klee_get_taint_number(void* buffer, size_t size);
+  uint32_t klee_get_taint(void* buffer, size_t size, size_t idx);
   /* Add an accesible memory object at a user specified location. It
    * is the users responsibility to make sure that these memory
    * objects do not overlap. These memory objects will also

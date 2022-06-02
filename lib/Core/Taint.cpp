@@ -3,30 +3,27 @@
 #include <assert.h>
 
 namespace klee {
-  bool isTainted(TaintSet ts) {
-    return ((ts & TAINT_MASK) != NO_TAINT);
+  bool isTainted(TaintSet& ts) {
+    return (!ts.empty());
   }
   
-  bool hasTaint(TaintSet ts, TaintTy t) {
-    assert(t <= MAX_TAINT);
-    return ((ts & t) != NO_TAINT);
+  bool hasTaint(TaintSet& ts, TaintTy t) {
+    return (ts.find(t) != ts.end());
   }
 
   void addTaint(TaintSet& ts, TaintTy t) {
-    assert(t <= MAX_TAINT);
-    ts |= (1 << t);
+    ts.insert(t);
   }
 
   void delTaint(TaintSet& ts, TaintTy t) {
-    assert(t <= MAX_TAINT);
-    ts &= (~(1 << t));
+    ts.erase(t);
   }
 
   void clearTaint(TaintSet& ts) {
-    ts = 0;
+    ts.clear();
   }
 
-  void mergeTaint(TaintSet& dst, TaintSet src) {
-    dst |= src;
+  void mergeTaint(TaintSet& dst, TaintSet& src) {
+    dst.insert(src.begin(), src.end());
   }
 }

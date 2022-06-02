@@ -321,7 +321,7 @@ private:
                               ref<Expr> address,
                               ref<Expr> value /* undef if read */,
                               KInstruction *target /* undef if write */,
-                              TaintSet ts = 0);
+                              TaintSet* ts = nullptr);
 
   void executeMakeSymbolic(ExecutionState &state, const MemoryObject *mo,
                            const std::string &name);
@@ -370,12 +370,12 @@ private:
   void bindLocal(KInstruction *target, 
                  ExecutionState &state, 
                  ref<Expr> value,
-                 TaintSet ts = 0);
+                 TaintSet* ts = nullptr);
   void bindArgument(KFunction *kf, 
                     unsigned index,
                     ExecutionState &state,
                     ref<Expr> value,
-                    TaintSet ts = 0);
+                    TaintSet* ts = nullptr);
 
   /// Evaluates an LLVM constant expression.  The optional argument ki
   /// is the instruction where this constant was encountered, or NULL
