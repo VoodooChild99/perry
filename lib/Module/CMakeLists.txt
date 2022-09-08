@@ -20,6 +20,10 @@ set(KLEE_MODULE_COMPONENT_SRCS
   OptNone.cpp
   PhiCleaner.cpp
   RaiseAsm.cpp
+  RaiseArmAsm.cpp
+  FuncSymbolizer.cpp
+  PerryAnalysis.cpp
+  ControlDependenceGraphPass.cpp
 )
 
 klee_add_component(kleeModule

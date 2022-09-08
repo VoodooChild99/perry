@@ -10,6 +10,8 @@
 #ifndef KLEE_EXECUTIONSTATE_H
 #define KLEE_EXECUTIONSTATE_H
 
+#include "llvm/IR/BasicBlock.h"
+
 #include "AddressSpace.h"
 #include "MergeHandler.h"
 
@@ -20,6 +22,8 @@
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
+#include "klee/Taint/Taint.h"
+#include "klee/Perry/PerryTrace.h"
 
 #include <map>
 #include <memory>
@@ -45,6 +49,7 @@ struct StackFrame {
 
   std::vector<const MemoryObject *> allocas;
   Cell *locals;
+  std::set<llvm::BasicBlock *> paths;
 
   /// Minimum distance to an uncovered instruction once the function
   /// returns. This is not a good place for this but is used to
@@ -239,6 +244,12 @@ public:
 
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
+
+  TaintSet taintedOutcomes;
+
+  PerryTrace pTrace;
+  std::vector<ref<RegisterAccess>> regAccesses;
+  uint64_t retVal;
 
 public:
 #ifdef KLEE_UNITTEST

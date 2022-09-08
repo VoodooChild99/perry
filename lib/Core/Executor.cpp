@@ -53,6 +53,7 @@
 #include "klee/System/MemoryUsage.h"
 #include "klee/System/Time.h"
 #include "klee/Taint/Taint.h"
+#include "klee/Perry/PerryExpr.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
@@ -445,6 +446,22 @@ cl::opt<bool> DebugCheckForImpliedValues(
     cl::desc("Debug the implied value optimization"),
     cl::cat(DebugCat));
 
+cl::opt<bool> EnableBitBand(
+  "enable-bitband", cl::init(false),
+  cl::desc("Enable Arm Bit-band feature"));
+
+cl::list<unsigned> BitBandRegionAddress(
+  "bitband-region-address",
+  cl::desc("Base address of a bitband region"));
+
+cl::list<unsigned> BitBandAliasAddress(
+  "bitband-alias-address",
+  cl::desc("Base address of a bitband alias"));
+
+cl::list<unsigned> BitBandAliasSize(
+  "bitband-alias-size",
+  cl::desc("Size of a bitband alias"));
+
 } // namespace
 
 // XXX hack
@@ -452,13 +469,14 @@ extern "C" unsigned dumpStates, dumpPTree;
 unsigned dumpStates = 0, dumpPTree = 0;
 
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
-                   InterpreterHandler *ih)
+                   InterpreterHandler *ih, PerryExprManager &_perryExprManager)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
       replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
-      ivcEnabled(false), debugLogBuffer(debugBufferString) {
+      ivcEnabled(false), debugLogBuffer(debugBufferString),
+      perryExprManager(_perryExprManager) {
 
 
   const time::Span maxTime{MaxTime};
@@ -511,6 +529,52 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                  error.c_str());
     }
   }
+}
+
+llvm::Module *
+Executor::setModuleNoFuss(std::unique_ptr<KModule> _kmodule,
+                          const ModuleOptions &opts)
+{
+  assert(!kmodule && _kmodule && "can only register one module"); // XXX gross
+
+  kmodule = std::move(_kmodule);
+
+  specialFunctionHandler = new SpecialFunctionHandler(*this);
+
+  specialFunctionHandler->bind();
+
+  if (StatsTracker::useStatistics() || userSearcherRequiresMD2U()) {
+    statsTracker = 
+      new StatsTracker(*this,
+                       interpreterHandler->getOutputFilename("assembly.ll"),
+                       userSearcherRequiresMD2U());
+  }
+
+  // Initialize the context.
+  if (!Context::isInitialized()) {
+    DataLayout *TD = kmodule->targetData.get();
+    Context::initialize(TD->isLittleEndian(),
+                        (Expr::Width)TD->getPointerSizeInBits());
+  }
+
+  return kmodule->module.get();
+}
+
+void Executor::outputModuleManifest() {
+  kmodule->outputManifest(interpreterHandler, StatsTracker::useStatistics());
+}
+
+void Executor::leakUniversalKModule() {
+  // The KModule is kept between runs
+  kmodule.release();
+}
+
+TaintSet* Executor::collectLiveTaints() {
+  return &liveTaints;
+}
+
+void Executor::collectPerryRecords(std::vector<PerryRecord> &_records) {
+  _records = std::move(perryRecords);
 }
 
 llvm::Module *
@@ -1117,6 +1181,19 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   // hint to just use the single constraint instead of all the binary
   // search ones. If that makes sense.
   if (res==Solver::True) {
+    if (isa<BranchInst>(current.prevPC->inst)) {
+      BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
+      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
+      if (paths->find(BI->getSuccessor(0)) != paths->end()) {
+        std::string MSG;
+        raw_string_ostream OS(MSG);
+        BI->print(OS);
+        OS << ", at ";
+        BI->getDebugLoc().print(OS);
+        terminateStateEarly(current, "visited true state", StateTerminationType::EARLY);
+        return StatePair(nullptr, nullptr);
+      }
+    }
     if (!isInternal) {
       if (pathWriter) {
         current.pathOS << "1";
@@ -1125,6 +1202,19 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
 
     return StatePair(&current, nullptr);
   } else if (res==Solver::False) {
+    if (isa<BranchInst>(current.prevPC->inst)) {
+      BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
+      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
+      if (paths->find(BI->getSuccessor(1)) != paths->end()) {
+        std::string MSG;
+        raw_string_ostream OS(MSG);
+        BI->print(OS);
+        OS << ", at ";
+        BI->getDebugLoc().print(OS);
+        terminateStateEarly(current, "visited false state", StateTerminationType::EARLY);
+        return StatePair(nullptr, nullptr);
+      }
+    }
     if (!isInternal) {
       if (pathWriter) {
         current.pathOS << "0";
@@ -1133,6 +1223,31 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
 
     return StatePair(nullptr, &current);
   } else {
+    if (isa<BranchInst>(current.prevPC->inst)) {
+      BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
+      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
+      if (paths->find(BI->getSuccessor(0)) != paths->end()) {
+        // true branch has been taken before within the function call stack
+        if (!isInternal) {
+          if (pathWriter) {
+            current.pathOS << "0";
+          }
+        }
+        // so we take the false branch
+        addConstraint(current, Expr::createIsZero(condition));
+        return StatePair(nullptr, &current);
+      } else if (paths->find(BI->getSuccessor(1)) != paths->end()) {
+        // false branch has been taken before within the function call stack
+        if (!isInternal) {
+          if (pathWriter) {
+            current.pathOS << "1";
+          }
+        }
+        // so we take the true branch
+        addConstraint(current, condition);
+        return StatePair(&current, nullptr);
+      }
+    }
     TimerStatIncrementer timer(stats::forkTime);
     ExecutionState *falseState, *trueState = &current;
 
@@ -2111,6 +2226,13 @@ Function* Executor::getTargetFunction(Value *calledVal, ExecutionState &state) {
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
+  state.stack.back().paths.insert(i->getParent());
+  // i->print(outs());
+  // if (i->hasMetadata(LLVMContext::MD_dbg)) {
+  //   outs() << " at ";
+  //   i->getDebugLoc().print(outs());
+  // }
+  // outs() << "\n";
   switch (i->getOpcode()) {
     // Control flow
   case Instruction::Ret: {
@@ -2347,7 +2469,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       std::map<ref<Expr>, BasicBlock *> expressionOrder;
 
       // Iterate through all non-default cases and order them by expressions
+      auto paths = state.stack.back().paths;
       for (auto i : si->cases()) {
+        if (paths.find(i.getCaseSuccessor()) != paths.end()) {
+          // we've executed this block before, skip
+          klee_message("Prune visited branches in switch.");
+          continue;
+        }
         ref<Expr> value = evalConstant(i.getCaseValue());
 
         BasicBlock *caseSuccessor = i.getCaseSuccessor();
@@ -2830,7 +2958,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       result = AddExpr::create(result,
                     MulExpr::create(Expr::createSExtToPointerWidth(index.value),
                                     Expr::createPointer(elementSize)));
-      mergeTaint(ts, index.taint);
+      // mergeTaint(ts, index.taint);
     }
     if (kgepi->offset)
       result = AddExpr::create(result,
@@ -3728,12 +3856,27 @@ std::string Executor::getAddressInfo(ExecutionState &state,
   return info.str();
 }
 
-
-void Executor::terminateState(ExecutionState &state) {
+void Executor::terminateState(ExecutionState &state, bool isNormalExit) {
   if (replayKTest && replayPosition!=replayKTest->numObjects) {
     klee_warning_once(replayKTest,
                       "replay did not consume all objects in test input.");
   }
+
+  bool tainted = !state.taintedOutcomes.empty();
+  state.pTrace.setTaintSet(state.taintedOutcomes);
+  if (tainted) {
+    mergeTaint(liveTaints, state.taintedOutcomes);
+  }
+  
+  // TODO: collect some information before the state is to be removed
+  PerryTrace::Constraints finalConstraints;
+  for (auto &E : state.constraints) {
+    finalConstraints.emplace_back(perryExprManager.acquirePerryExpr(E));
+  }
+
+  perryRecords.emplace_back(PerryRecord(isNormalExit, state.retVal,
+                                        finalConstraints, state.regAccesses,
+                                        state.pTrace));
 
   interpreterHandler->incPathsExplored();
 
@@ -3778,7 +3921,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
-  terminateState(state);
+  terminateState(state, true);
 }
 
 void Executor::terminateStateEarly(ExecutionState &state, const Twine &message,
@@ -4283,6 +4426,55 @@ void Executor::resolveExact(ExecutionState &state,
   }
 }
 
+static void logRegOp(PerryExprManager &perryExprManager,
+                     ExecutionState &state, const ObjectState *wos,
+                     uint64_t offset_concrete, unsigned width,
+                     const ref<Expr> &ExprInReg,
+                     bool isWrite, TaintSet *ts = nullptr,  /* NULL if read */
+                     Instruction *place = nullptr           /* NULL if write */)
+{
+  if (LoadInst *SI = dyn_cast<LoadInst>(state.prevPC->inst)) {
+    if (SI->user_empty()) {
+      return;
+    }
+  }
+  TaintTy rts = wos->getPersistTaint(offset_concrete);
+  if (rts != ObjectState::NO_PERSIST_TAINT) {
+    rts |= wos->getTaintReadCtx(offset_concrete);
+
+    ref<PerryExpr> ER = perryExprManager.acquirePerryExpr(ExprInReg);
+    if (isWrite) {
+      state.pTrace.emplace_back(
+        PerryTrace::PerryTraceItem(state.regAccesses.size(),
+                                   state.constraints.size()));
+      state.regAccesses.emplace_back(
+        RegisterAccess::alloc(rts, RegisterAccess::REG_WRITE,
+                              wos->getUpdatesPublic().root->getName(),
+                              offset_concrete, width, ER));
+      assert(ts != nullptr);
+      bool flag = false;
+      for (auto tt : *ts) {
+        if (tt & 0x00ff0000) {
+          flag = true;
+          break;
+        }
+      }
+      if (flag) {
+        // mark data register
+        addTaint(state.taintedOutcomes, rts);
+      }
+    } else {
+      state.pTrace.emplace_back(
+        PerryTrace::PerryTraceItem(state.regAccesses.size(),
+                                   state.constraints.size()));
+      state.regAccesses.emplace_back(
+        RegisterAccess::alloc(rts, RegisterAccess::REG_READ,
+                              wos->getUpdatesPublic().root->getName(),
+                              offset_concrete, width, ER, place));
+    }
+  }
+}
+
 void Executor::executeMemoryOperation(ExecutionState &state,
                                       bool isWrite,
                                       ref<Expr> address,
@@ -4306,6 +4498,33 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   ObjectPair op;
   bool success;
   solver->setTimeout(coreSolverTimeout);
+  bool do_bitband = false;
+  unsigned bitband_bit_numer = 0;
+  Expr::Width orig_type = type;
+
+  // handle bit-banding
+  if (EnableBitBand && isa<ConstantExpr>(address)) {
+    auto cur_address = cast<ConstantExpr>(address)->getZExtValue();
+    unsigned num_bitband_regions = BitBandRegionAddress.size();
+    for (unsigned i = 0; i < num_bitband_regions; ++i) {
+      auto alias_base = BitBandAliasAddress[i];
+      auto alias_size = BitBandAliasSize[i];
+      if (cur_address >= alias_base && cur_address < (alias_base + alias_size)) {
+        auto bit_word_offset = (cur_address - alias_base);
+        bitband_bit_numer = ((bit_word_offset & 0x1f) >> 2);
+        auto byte_offset = (bit_word_offset >> 5);
+        auto mapped_address = BitBandRegionAddress[i] + byte_offset;
+        // do bit band later
+        do_bitband = true;
+        // replace the address
+        address = ConstantExpr::create(mapped_address, address.get()->getWidth());
+        // bytes must be 1
+        bytes = 1;
+        type = Expr::Int8;
+      }
+    }
+  }
+
   if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
     address = toConstant(state, address, "resolveOne failure");
     success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
@@ -4341,6 +4560,20 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           terminateStateOnError(state, "memory error: object read only",
                                 StateTerminationType::ReadOnly);
         } else {
+          // handle bit band
+          if (do_bitband) {
+            // new_val = (old_val & ~(1 << bitband_bit_numer)) | (given_val << bitband_bit_numer)
+            ref<Expr> old_val = os->read(offset, Expr::Int8);
+            uint8_t bitband_mask = ~(1 << bitband_bit_numer);
+            old_val = AndExpr::create(
+              old_val, ConstantExpr::create(bitband_mask, Expr::Int8));
+            old_val = OrExpr::create(
+              old_val,
+              ShlExpr::create(
+                ExtractExpr::create(value, 0, Expr::Int8),
+                ConstantExpr::create(bitband_bit_numer, Expr::Int8)));
+            value = old_val;
+          }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
           wos->write(offset, value);
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
@@ -4351,6 +4584,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             for (unsigned int i = 0; i < type / 8; ++i) {
               wos->writeTaint(offset_concrete + i, *ts);
             }
+            logRegOp(perryExprManager, state, wos, offset_concrete,
+                     type, value, true, ts);
           }
         }          
       } else {
@@ -4371,9 +4606,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               mergeTaint(t, *rt);
             }
           }
-
+          logRegOp(perryExprManager, state, os, offset_concrete,
+                   type, result, false, nullptr, target->inst);
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, state, result, &t);
         } else {
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, state, result);
         }
       }
@@ -4412,6 +4654,20 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         } else {
           ObjectState *wos = bound->addressSpace.getWriteable(mo, os);
           ref<Expr> offset = mo->getOffsetExpr(address);
+          // handle bit band
+          if (do_bitband) {
+            // new_val = (old_val & ~(1 << bitband_bit_numer)) | (given_val << bitband_bit_numer)
+            ref<Expr> old_val = os->read(offset, Expr::Int8);
+            uint8_t bitband_mask = ~(1 << bitband_bit_numer);
+            old_val = AndExpr::create(
+              old_val, ConstantExpr::create(bitband_mask, Expr::Int8));
+            old_val = OrExpr::create(
+              old_val,
+              ShlExpr::create(
+                ExtractExpr::create(value, 0, Expr::Int8),
+                ConstantExpr::create(bitband_bit_numer, Expr::Int8)));
+            value = old_val;
+          }
           wos->write(offset, value);
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             unsigned offset_concrete;
@@ -4421,6 +4677,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             for (unsigned int i = 0; i < bytes; ++i) {
               wos->writeTaint(offset_concrete + i, *ts);
             }
+            logRegOp(perryExprManager, state, wos, offset_concrete,
+                     bytes * 8, value, true, ts);
           }
         }
       } else {
@@ -4439,9 +4697,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               mergeTaint(t, *rt);
             }
           }
-
+          logRegOp(perryExprManager, state, os, offset_concrete,
+                   bytes * 8, result, false, nullptr, target->inst);
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, *bound, result, &t);
         } else {
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, *bound, result);
         }
         
@@ -4629,6 +4894,42 @@ void Executor::runFunctionAsMain(Function *f,
       }
     }
   }
+  
+  initializeGlobals(*state);
+
+  processTree = std::make_unique<PTree>(state);
+  run(*state);
+  processTree = nullptr;
+
+  // hack to clear memory objects
+  delete memory;
+  memory = new MemoryManager(NULL);
+
+  globalObjects.clear();
+  globalAddresses.clear();
+
+  if (statsTracker)
+    statsTracker->done();
+}
+
+void Executor::runFunctionJustAsIt(llvm::Function *f) {
+  // force deterministic initialization of memory objects
+  srand(1);
+  srandom(1);
+
+  KFunction *kf = kmodule->functionMap[f];
+  assert(kf);
+
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
+
+  if (pathWriter) 
+    state->pathOS = pathWriter->open();
+  if (symPathWriter) 
+    state->symPathOS = symPathWriter->open();
+
+
+  if (statsTracker)
+    statsTracker->framePushed(*state, 0);
   
   initializeGlobals(*state);
 
@@ -4929,6 +5230,7 @@ void Executor::dumpStates() {
 ///
 
 Interpreter *Interpreter::create(LLVMContext &ctx, const InterpreterOptions &opts,
-                                 InterpreterHandler *ih) {
-  return new Executor(ctx, opts, ih);
+                                 InterpreterHandler *ih,
+                                 PerryExprManager &_perryExprManager) {
+  return new Executor(ctx, opts, ih, _perryExprManager);
 }

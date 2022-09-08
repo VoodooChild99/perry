@@ -11,6 +11,7 @@
 #define KLEE_PASSES_H
 
 #include "klee/Config/Version.h"
+#include "klee/Perry/Passes.h"
 
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/IntrinsicLowering.h"
@@ -18,6 +19,11 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/IRBuilder.h"
+
+#include <set>
+#include <map>
+#include <vector>
 
 namespace llvm {
 class Function;
@@ -192,6 +198,90 @@ public:
   OptNonePass() : llvm::ModulePass(ID) {}
   bool runOnModule(llvm::Module &M) override;
 };
+
+/// Raise ARM instructions
+class RaiseArmAsmPass : public llvm::ModulePass {
+
+public:
+  // replace handler
+  using InsnRepHandlerFnTy = void(*)(llvm::Module&, llvm::CallInst*);
+  // instrument handler
+  using InsnInstrHandlerFnTy = void(*)(llvm::Module&);
+  // map
+  struct HandlerInfo {
+    InsnInstrHandlerFnTy InstrFn;
+    std::string InstrFnName;
+  };
+  using HandlerMapTy = std::map<std::string, HandlerInfo>;
+  using IgnoreSetTy = std::set<std::string>;
+
+  static char ID;
+  RaiseArmAsmPass() : llvm::ModulePass(ID) {}
+  bool runOnModule(llvm::Module &M) override;
+
+private:
+  void handleAsmInsn(llvm::Module &M, llvm::Instruction &I,
+                      std::map<std::string, std::set<llvm::CallInst*>> &save,
+                      std::set<llvm::CallInst*> &ignore);
+
+  static HandlerMapTy handlerMap;
+  static IgnoreSetTy ignoreSet;
+  static HandlerMapTy InitHandlerMap();
+  static IgnoreSetTy InitIgnoreSet();
+};
+
+/// Instrument calls to target function, and symbolize every parameters
+class FuncSymbolizePass : public llvm::ModulePass {
+public:
+  static char ID;
+  FuncSymbolizePass(const std::set<std::string> &_TopLevelFunctions,
+                    std::map<std::string, std::string> *_FunctionToSymbolName,
+            const std::map<StructOffset, std::set<std::string>> &_PtrFunction,
+            const std::map<std::string, std::set<uint64_t>> &_OkValuesMap) :
+    llvm::ModulePass(ID), TopLevelFunctions(_TopLevelFunctions),
+    FunctionToSymbolName(_FunctionToSymbolName), PtrFunction(_PtrFunction),
+    OkValuesMap(_OkValuesMap) {}
+  bool runOnModule(llvm::Module &M) override;
+private:
+  // A tree-like data structure to hold the real value of each formal param
+  struct ParamCell {
+    ParamCell *parent = nullptr;
+    std::vector<ParamCell*> child;
+    llvm::Value *val = nullptr;
+    llvm::Type *ParamType = nullptr;
+    int depth = 0;
+    int idx = -1;
+    bool isBuffer = false;
+    ~ParamCell();
+  };
+  const std::set<std::string> &TopLevelFunctions;
+  std::map<std::string, std::string> *FunctionToSymbolName;
+  const std::map<StructOffset, std::set<std::string>> &PtrFunction;
+  const std::map<std::string, std::set<uint64_t>> &OkValuesMap;
+  std::string PeripheralPlaceholder;
+  const llvm::DataLayout *DL;
+  llvm::LLVMContext *ctx;
+  llvm::FunctionCallee MakeSymbolicFC;
+  llvm::FunctionCallee SetTaintFC;
+  llvm::FunctionCallee SetPersistTaintFC;
+  llvm::FunctionCallee GetTaintFC;
+  llvm::FunctionCallee GetRetValFC;
+  llvm::FunctionCallee AllocFixFC;
+  std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;
+  std::pair<llvm::Value*, int> fRetVal;
+  void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
+  void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
+                       std::vector<ParamCell*> &results);
+  void makeSymbolic(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
+  void prepFunctionPtr(llvm::Module &M, llvm::Function *TargetF,
+                       llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
+  void setTaint(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
+  void issueCallToTarget(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
+                         std::vector<ParamCell*> &results);
+  void collectTaint(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results,
+                    const std::string &FName);
+};
+
 } // namespace klee
 
 #endif /* KLEE_PASSES_H */

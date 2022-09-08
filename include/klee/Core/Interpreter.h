@@ -15,6 +15,11 @@
 #include <string>
 #include <vector>
 
+#include "klee/Taint/Taint.h"
+#include "klee/Perry/PerryTrace.h"
+#include "klee/Perry/Passes.h"
+#include "klee/Perry/PerryExprManager.h"
+
 struct KTest;
 
 namespace llvm {
@@ -29,6 +34,7 @@ namespace klee {
 class ExecutionState;
 class Interpreter;
 class TreeStreamWriter;
+class KModule;
 
 class InterpreterHandler {
 public:
@@ -59,6 +65,9 @@ public:
     bool Optimize;
     bool CheckDivZero;
     bool CheckOvershift;
+    std::set<std::string> TopLevelFunctions;
+    std::map<StructOffset, std::set<std::string>> PtrFunction;
+    std::map<std::string, std::set<uint64_t>> OkValuesMap;
 
     ModuleOptions(const std::string &_LibraryDir,
                   const std::string &_EntryPoint, const std::string &_OptSuffix,
@@ -117,7 +126,8 @@ public:
 
   static Interpreter *create(llvm::LLVMContext &ctx,
                              const InterpreterOptions &_interpreterOpts,
-                             InterpreterHandler *ih);
+                             InterpreterHandler *ih,
+                             PerryExprManager &_perryExprManager);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final
@@ -127,6 +137,13 @@ public:
   virtual llvm::Module *
   setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
             const ModuleOptions &opts) = 0;
+  
+  virtual llvm::Module *setModuleNoFuss(std::unique_ptr<KModule> _kmodule,
+                                        const ModuleOptions &opts) = 0;
+  virtual void outputModuleManifest() = 0;
+  virtual void leakUniversalKModule() = 0;
+  virtual TaintSet* collectLiveTaints() = 0;
+  virtual void collectPerryRecords(std::vector<PerryRecord> &) = 0;
 
   // supply a tree stream writer which the interpreter will use
   // to record the concrete path (as a stream of '0' and '1' bytes).
@@ -153,6 +170,8 @@ public:
                                  int argc,
                                  char **argv,
                                  char **envp) = 0;
+
+  virtual void runFunctionJustAsIt(llvm::Function *f) = 0;
 
   /*** Runtime options ***/
 

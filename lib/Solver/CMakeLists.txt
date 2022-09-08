@@ -30,6 +30,7 @@ klee_add_component(kleaverSolver
   ValidatingSolver.cpp
   Z3Builder.cpp
   Z3Solver.cpp
+  PerryZ3Builder.cpp
 )
 
 set(LLVM_COMPONENTS

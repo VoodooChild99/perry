@@ -22,6 +22,7 @@ namespace llvm {
 }
 
 namespace klee {
+  class KModule;
   class Executor;
   class Expr;
   class ExecutionState;
@@ -69,6 +70,8 @@ namespace klee {
     static const_iterator begin();
     static const_iterator end();
     static int size();
+    static void staticPrepare(KModule &KM,
+                              std::vector<const char *> &preservedFunctions);
 
 
 
@@ -149,9 +152,12 @@ namespace klee {
     HANDLER(handleSubOverflow);
     HANDLER(handleDivRemOverflow);
     HANDLER(handleSetTaint);
+    HANDLER(handleSetPersistTaint);
     HANDLER(handleHasTaint);
     HANDLER(handleGetTaintNum);
     HANDLER(handleGetTaint);
+    HANDLER(handleGetTaintInternal);
+    HANDLER(handleGetReturnValue);
 #undef HANDLER
   };
 } // End klee namespace

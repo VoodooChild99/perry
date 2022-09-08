@@ -159,7 +159,7 @@ MemoryObject *MemoryManager::allocateFixed(uint64_t address, uint64_t size,
        ++it) {
     MemoryObject *mo = *it;
     if (address + size > mo->address && address < mo->address + mo->size)
-      klee_error("Trying to allocate an overlapping object");
+      klee_error("Trying to allocate an overlapping object: 0x%lx", address);
   }
 #endif
 

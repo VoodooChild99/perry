@@ -132,6 +132,19 @@ ObjectState::ObjectState(const ObjectState &os)
       taints[i] = os.taints[i];
     }
   }
+
+  hasPersistentTaint = os.hasPersistentTaint;
+
+  if (os.persistTaint) {
+    persistTaint = new TaintTy[size];
+    memcpy(persistTaint, os.persistTaint, size * sizeof(*persistTaint));
+  }
+
+  if (os.TaintReadCtx) {
+    TaintReadCtx = new TaintTy[size];
+    memcpy(TaintReadCtx, os.TaintReadCtx,
+           size * sizeof(*TaintReadCtx));
+  }
 }
 
 ObjectState::~ObjectState() {
@@ -143,6 +156,16 @@ ObjectState::~ObjectState() {
   if (taints) {
     delete[] taints;
     taints = nullptr;
+  }
+
+  if (persistTaint) {
+    delete[] persistTaint;
+    persistTaint = nullptr;
+  }
+
+  if (TaintReadCtx) {
+    delete[] TaintReadCtx;
+    TaintReadCtx = nullptr;
   }
 }
 
@@ -202,6 +225,10 @@ const UpdateList &ObjectState::getUpdates() const {
   }
 
   return updates;
+}
+
+const UpdateList &ObjectState::getUpdatesPublic() const {
+  return getUpdates();
 }
 
 void ObjectState::flushToConcreteStore(TimingSolver *solver,
@@ -609,9 +636,19 @@ void ObjectState::writeTaint(unsigned offset, TaintSet& ts) {
     }
 
     taints = new TaintSet[size];
+    if (hasPersistentTaint) {
+      for (unsigned int i = 0; i < size; ++i) {
+        if (persistTaint[i] != NO_PERSIST_TAINT) {
+          addTaint(taints[i], persistTaint[i]);
+        }
+      }
+    }
   }
 
   taints[offset] = ts;
+  if (hasPersistentTaint && persistTaint[offset] != NO_PERSIST_TAINT) {
+    addTaint(taints[offset], persistTaint[offset]);
+  }
 }
 
 
@@ -619,6 +656,50 @@ TaintSet* ObjectState::readTaint(unsigned offset) const {
   if (!taints) {
     return nullptr;
   } else {
+    if (hasPersistentTaint && persistTaint[offset] != NO_PERSIST_TAINT) {
+      TaintSet newts;
+      TaintReadCtx[offset] += 1;
+      if (TaintReadCtx[offset] > 0x0000ffff) {
+        klee_error("Taint read ctx too big");
+      }
+      for (auto t : taints[offset]) {
+        if ((t & 0xffff0000) == (persistTaint[offset] & 0xffff0000)) {
+          newts.insert(persistTaint[offset] | TaintReadCtx[offset]);
+        } else {
+          newts.insert(t);
+        }
+      }
+      taints[offset] = std::move(newts);
+    }
     return &taints[offset];
+  }
+}
+
+void ObjectState::setPersistTaint(unsigned offset, TaintTy pt) {
+  hasPersistentTaint = true;
+  if (!persistTaint) {
+    persistTaint = new TaintTy[size];
+    memset(persistTaint, 0xff, size * sizeof(*persistTaint));
+  }
+  if (!TaintReadCtx) {
+    TaintReadCtx = new TaintTy[size];
+    memset(TaintReadCtx, 0, size * sizeof(*TaintReadCtx));
+  }
+  persistTaint[offset] = pt;
+}
+
+TaintTy ObjectState::getPersistTaint(unsigned offset) const {
+  if (!hasPersistentTaint) {
+    return NO_PERSIST_TAINT;
+  } else {
+    return persistTaint[offset];
+  }
+}
+
+TaintTy ObjectState::getTaintReadCtx(unsigned offset) const {
+  if (!hasPersistentTaint) {
+    return 0;
+  } else {
+    return TaintReadCtx[offset];
   }
 }

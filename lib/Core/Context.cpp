@@ -27,6 +27,10 @@ void Context::initialize(bool IsLittleEndian, Expr::Width PointerWidth) {
   Initialized = true;
 }
 
+bool Context::isInitialized() {
+  return Initialized;
+}
+
 const Context &Context::get() {
   assert(Initialized && "Context has not been initialized!");
   return TheContext;

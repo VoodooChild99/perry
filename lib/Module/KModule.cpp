@@ -40,6 +40,7 @@
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Analysis/PostDominators.h"
 
 #include <sstream>
 
@@ -211,13 +212,23 @@ bool KModule::link(std::vector<std::unique_ptr<llvm::Module>> &modules,
   return modules.size() != numRemainingModules;
 }
 
-void KModule::instrument(const Interpreter::ModuleOptions &opts) {
+void KModule::instrument(const Interpreter::ModuleOptions &opts,
+                         std::map<std::string, std::string> *SymName) {
   // Inject checks prior to optimization... we also perform the
   // invariant transformations that we will end up doing later so that
   // optimize is seeing what is as close as possible to the final
   // module.
   legacy::PassManager pm;
   pm.add(new RaiseAsmPass());
+
+  // Raise ARM asm
+  pm.add(new RaiseArmAsmPass());
+
+  // Symbolize Function
+  if (SymName) {
+    pm.add(new FuncSymbolizePass(opts.TopLevelFunctions, SymName,
+                                 opts.PtrFunction, opts.OkValuesMap));
+  }
 
   // This pass will scalarize as much code as possible so that the Executor
   // does not need to handle operands of vector type for most instructions
@@ -357,6 +368,16 @@ void KModule::checkModule() {
   }
 }
 
+void KModule::prepareCDG(const std::set<std::string> &_TopLevelFunctions,
+                         ControlDependenceGraphPass::NodeSet &_nodeSet,
+                         ControlDependenceGraphPass::NodeMap &_nodeMap)
+{
+  legacy::PassManager pm;
+  pm.add(new PostDominatorTreeWrapperPass());
+  pm.add(new ControlDependenceGraphPass(_TopLevelFunctions, _nodeSet, _nodeMap));
+  pm.run(*module);
+}
+
 KConstant* KModule::getKConstant(const Constant *c) {
   auto it = constantMap.find(c);
   if (it != constantMap.end())
@@ -478,4 +499,69 @@ KFunction::~KFunction() {
   for (unsigned i=0; i<numInstructions; ++i)
     delete instructions[i];
   delete[] instructions;
+}
+
+void KModule::manifestNoOutput() {
+  /* Build shadow structures */
+
+  infos = std::unique_ptr<InstructionInfoTable>(
+      new InstructionInfoTable(*module.get()));
+
+  std::vector<Function *> declarations;
+
+  for (auto &Function : *module) {
+    if (Function.isDeclaration()) {
+      declarations.push_back(&Function);
+      continue;
+    }
+
+    auto kf = std::unique_ptr<KFunction>(new KFunction(&Function, this));
+
+    for (unsigned i=0; i<kf->numInstructions; ++i) {
+      KInstruction *ki = kf->instructions[i];
+      ki->info = &infos->getInfo(*ki->inst);
+    }
+
+    functionMap.insert(std::make_pair(&Function, kf.get()));
+    functions.push_back(std::move(kf));
+  }
+
+  /* Compute various interesting properties */
+
+  for (auto &kf : functions) {
+    if (functionEscapes(kf->function))
+      escapingFunctions.insert(kf->function);
+  }
+
+  for (auto &declaration : declarations) {
+    if (functionEscapes(declaration))
+      escapingFunctions.insert(declaration);
+  }
+
+  if (DebugPrintEscapingFunctions && !escapingFunctions.empty()) {
+    llvm::errs() << "KLEE: escaping functions: [";
+    std::string delimiter = "";
+    for (auto &Function : escapingFunctions) {
+      llvm::errs() << delimiter << Function->getName();
+      delimiter = ", ";
+    }
+    llvm::errs() << "]\n";
+  }
+}
+
+void KModule::outputManifest(InterpreterHandler *ih, bool forceSourceOutput){
+  if (OutputSource || forceSourceOutput) {
+    std::unique_ptr<llvm::raw_fd_ostream> os(ih->openOutputFile("assembly.ll"));
+    assert(os && !os->has_error() && "unable to open source output");
+    *os << *module;
+  }
+
+  if (OutputModule) {
+    std::unique_ptr<llvm::raw_fd_ostream> f(ih->openOutputFile("final.bc"));
+#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
+    WriteBitcodeToFile(*module, *f);
+#else
+    WriteBitcodeToFile(module.get(), *f);
+#endif
+  }
 }

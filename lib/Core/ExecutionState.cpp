@@ -57,6 +57,7 @@ StackFrame::StackFrame(const StackFrame &s)
     kf(s.kf),
     callPathNode(s.callPathNode),
     allocas(s.allocas),
+    paths(s.paths),
     minDistToUncoveredOnReturn(s.minDistToUncoveredOnReturn),
     varargs(s.varargs) {
   locals = new Cell[s.kf->numRegisters];
@@ -105,7 +106,11 @@ ExecutionState::ExecutionState(const ExecutionState& state):
                              ? state.unwindingInformation->clone()
                              : nullptr),
     coveredNew(state.coveredNew),
-    forkDisabled(state.forkDisabled) {
+    forkDisabled(state.forkDisabled),
+    taintedOutcomes(state.taintedOutcomes),
+    pTrace(state.pTrace),
+    regAccesses(state.regAccesses),
+    retVal(state.retVal) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }

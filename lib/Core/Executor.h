@@ -213,6 +213,14 @@ private:
   // a set of taints that occur in the condition of a branch
   TaintSet taintedCond;
 
+  TaintSet liveTaints;
+
+  std::vector<PerryRecord> perryRecords;
+  PerryExprManager &perryExprManager;
+  // std::vector<PerryTrace> RegAccessTrace;
+  // std::vector<std::pair<bool, PerryTrace::Constraints>> finalConditions;
+  // std::vector<uint64_t> returnValues;
+
   /// Return the typeid corresponding to a certain `type_info`
   ref<ConstantExpr> getEhTypeidFor(ref<Expr> type_info);
 
@@ -419,7 +427,7 @@ private:
       llvm::Instruction** lastInstruction);
 
   /// Remove state from queue and delete state
-  void terminateState(ExecutionState &state);
+  void terminateState(ExecutionState &state, bool isNormalExit=false);
 
   /// Call exit handler and terminate state normally
   /// (end of execution path)
@@ -489,7 +497,7 @@ private:
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
-      InterpreterHandler *ie);
+      InterpreterHandler *ie, PerryExprManager &_perryExprManager);
   virtual ~Executor();
 
   const InterpreterHandler& getHandler() {
@@ -517,12 +525,21 @@ public:
   llvm::Module *setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,
                           const ModuleOptions &opts) override;
 
+  llvm::Module *setModuleNoFuss(std::unique_ptr<KModule> _kmodule,
+                                const ModuleOptions &opts) override;
+  void outputModuleManifest() override;
+  void leakUniversalKModule() override;
+  TaintSet* collectLiveTaints() override;
+  void collectPerryRecords(std::vector<PerryRecord> &) override;
+
   void useSeeds(const std::vector<struct KTest *> *seeds) override {
     usingSeeds = seeds;
   }
 
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
+
+  void runFunctionJustAsIt(llvm::Function *f) override;
 
   /*** Runtime options ***/
 

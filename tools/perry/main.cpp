@@ -23,6 +23,12 @@
 #include "klee/Support/ModuleUtil.h"
 #include "klee/Support/PrintVersion.h"
 #include "klee/System/Time.h"
+#include "klee/Perry/Passes.h"
+#include "klee/Module/Cell.h"
+#include "klee/Module/InstructionInfoTable.h"
+#include "klee/Module/KModule.h"
+#include "klee/Perry/PerryZ3Builder.h"
+#include "klee/Perry/PerryUtils.h"
 
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -40,9 +46,11 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Analysis/LoopInfo.h"
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Signals.h"
+#include "llvm/IR/LegacyPassManager.h"
 
 
 #include <dirent.h>
@@ -50,6 +58,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/prctl.h>
+#include <iostream>
 
 #include <cerrno>
 #include <ctime>
@@ -57,7 +67,7 @@
 #include <iomanip>
 #include <iterator>
 #include <sstream>
-
+#include <regex>
 
 using namespace llvm;
 using namespace klee;
@@ -78,13 +88,21 @@ namespace {
   CollectTaintedCond("collect-state-var",
                      cl::init(false),
                      cl::desc("State Variable Collection (default=false)"));
+  cl::opt<std::string>
+  PerryOutputFile("perry-out-file",
+                  cl::desc("Output file path for Perry"),
+                  cl::init(""));
+  cl::opt<bool>
+  EnableScopeHeuristic("enable-scope-heuristic",
+                       cl::init(true),
+                       cl::desc("Enable The Scope Heuristic"));
+  cl::opt<std::string>
+  ARMCPUVersion("arm-cpu-version",
+                cl::init(""),
+                cl::desc("Specify ARM CPU version"));
 
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
-
-  cl::list<std::string>
-  InputArgv(cl::ConsumeAfter,
-            cl::desc("<program arguments>..."));
 
 
   /*** Test case options ***/
@@ -156,11 +174,6 @@ namespace {
             cl::init(""),
             cl::cat(StartCat));
 
-  cl::opt<std::string>
-  Environ("env-file",
-          cl::desc("Parse environment from the given file (in \"env\" format)"),
-          cl::cat(StartCat));
-
   cl::opt<bool>
   OptimizeModule("optimize",
                  cl::desc("Optimize the code before execution (default=false)."),
@@ -178,7 +191,8 @@ namespace {
   cl::OptionCategory LinkCat("Linking options",
                              "These options control the libraries being linked.");
 
-  enum class LibcType { FreestandingLibc, KleeLibc, UcLibc };
+  // MCU firmwares are self-contained, we therefore need no runtimes
+  enum class LibcType { FreestandingLibc, KleeLibc, UcLibc, NopNotNever };
 
   cl::opt<LibcType> Libc(
       "libc", cl::desc("Choose libc version (none by default)."),
@@ -188,8 +202,9 @@ namespace {
               "Don't link in a libc (only provide freestanding environment)"),
           clEnumValN(LibcType::KleeLibc, "klee", "Link in KLEE's libc"),
           clEnumValN(LibcType::UcLibc, "uclibc",
-                     "Link in uclibc (adapted for KLEE)")),
-      cl::init(LibcType::FreestandingLibc), cl::cat(LinkCat));
+                     "Link in uclibc (adapted for KLEE)"),
+          clEnumValN(LibcType::NopNotNever, "nop", "Don't link libc (for real)")),
+      cl::init(LibcType::NopNotNever), cl::cat(LinkCat));
 
   cl::list<std::string>
       LinkLibraries("link-llvm-lib",
@@ -390,14 +405,14 @@ KleeHandler::KleeHandler(int argc, char **argv)
       if (mkdir(d.c_str(), 0775) == 0) {
         m_outputDirectory = d;
 
-        SmallString<128> klee_last(directory);
-        llvm::sys::path::append(klee_last, "klee-last");
+        // SmallString<128> klee_last(directory);
+        // llvm::sys::path::append(klee_last, "klee-last");
 
-        if (((unlink(klee_last.c_str()) < 0) && (errno != ENOENT)) ||
-            symlink(m_outputDirectory.c_str(), klee_last.c_str()) < 0) {
+        // if (((unlink(klee_last.c_str()) < 0) && (errno != ENOENT)) ||
+        //     symlink(m_outputDirectory.c_str(), klee_last.c_str()) < 0) {
 
-          klee_warning("cannot create klee-last symlink: %s", strerror(errno));
-        }
+        //   klee_warning("cannot create klee-last symlink: %s", strerror(errno));
+        // }
 
         break;
       }
@@ -431,6 +446,9 @@ KleeHandler::~KleeHandler() {
   delete m_symPathWriter;
   fclose(klee_warning_file);
   fclose(klee_message_file);
+  /// :) set pointers to null after they're released
+  klee_warning_file = nullptr;
+  klee_message_file = nullptr;
 }
 
 void KleeHandler::setInterpreter(Interpreter *i) {
@@ -690,15 +708,6 @@ std::string KleeHandler::getRunTimeLibraryPath(const char *argv0) {
 //===----------------------------------------------------------------------===//
 // main Driver function
 //
-static std::string strip(std::string &in) {
-  unsigned len = in.size();
-  unsigned lead = 0, trail = len;
-  while (lead<len && isspace(in[lead]))
-    ++lead;
-  while (trail>lead && isspace(in[trail-1]))
-    --trail;
-  return in.substr(lead, trail-lead);
-}
 
 static void parseArguments(int argc, char **argv) {
   cl::SetVersionPrinter(klee::printVersion);
@@ -793,6 +802,10 @@ static const char *modelledExternals[] = {
   "klee_warning",
   "klee_warning_once",
   "klee_stack_trace",
+  "klee_set_taint",
+  "klee_set_persist_taint",
+  "klee_get_taint_internal",
+  "klee_get_return_value",
 #ifdef SUPPORT_KLEE_EH_CXX
   "_klee_eh_Unwind_RaiseException_impl",
   "klee_eh_typeid_for",
@@ -916,6 +929,8 @@ void externalsAndGlobalsCheck(const llvm::Module *m) {
     break;
   case LibcType::FreestandingLibc: /* silence compiler warning */
     break;
+  case LibcType::NopNotNever:
+    break;
   }
 
   if (WithPOSIXRuntime)
@@ -1018,22 +1033,6 @@ static void interrupt_handle() {
 
 static void interrupt_handle_watchdog() {
   // just wait for the child to finish
-}
-
-// This is a temporary hack. If the running process has access to
-// externals then it can disable interrupts, which screws up the
-// normal "nice" watchdog termination process. We try to request the
-// interpreter to halt using this mechanism as a last resort to save
-// the state data before going ahead and killing it.
-static void halt_via_gdb(int pid) {
-  char buffer[256];
-  snprintf(buffer, sizeof(buffer),
-          "gdb --batch --eval-command=\"p halt_execution()\" "
-          "--eval-command=detach --pid=%d &> /dev/null",
-          pid);
-  //  fprintf(stderr, "KLEE: WATCHDOG: running: %s\n", buffer);
-  if (system(buffer)==-1)
-    perror("system");
 }
 
 static void replaceOrRenameFunction(llvm::Module *module,
@@ -1153,7 +1152,1057 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
                FortifyPath.c_str(), errorMsg.c_str());
 }
 
-int main(int argc, char **argv, char **envp) {
+static void 
+collectTopLevelFunctions(llvm::Module& MainModule,
+                         std::set<std::string> &TopLevelFunctions,
+                         std::map<StructOffset, std::set<std::string>> &PtrFunc,
+                         std::map<std::string, std::set<uint64_t>> &OkValuesMap)
+{
+  llvm::legacy::PassManager pm;
+  // collect basic informations
+  pm.add(new PerryAnalysisPass(TopLevelFunctions, PtrFunc, OkValuesMap));
+
+  pm.run(MainModule);
+}
+
+static void setInterpreterOptions(Interpreter::InterpreterOptions &IOpts,
+                                  Interpreter::TaintOption::Option TaintOpt,
+                                  bool CollectTaintedCondOpt,
+                                  unsigned int MakeConcreteSymbolicOpt)
+{
+  IOpts.TaintOpt = Interpreter::TaintOption(TaintOpt);
+  IOpts.CollectTaintedCond = CollectTaintedCondOpt;
+  IOpts.MakeConcreteSymbolic = MakeConcreteSymbolicOpt;
+}
+
+static void singlerun(std::vector<bool> &replayPath,
+                      Interpreter::InterpreterOptions &IOpts,
+                      LLVMContext &ctx,
+                      Interpreter::ModuleOptions &Opts,
+                      KModule *loadedModules,
+                      std::string mainFunctionName,
+                      TaintSet &ts,
+                      std::vector<PerryRecord> &records,
+                      PerryExprManager &PEM);
+
+static int workerPID;
+
+static void timeoutHandler(int sig) {
+  kill(workerPID, SIGINT);
+}
+
+static bool
+containsReadTo(const std::string &SymName, const ref<PerryExpr> &PE) {
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (RE->Name == SymName) {
+        return true;
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return false;
+}
+
+static void
+collectContainedSym(const ref<PerryExpr> &PE, std::set<SymRead> &S) {
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (auto CE = dyn_cast<PerryConstantExpr>(RE->idx)) {
+        S.insert(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width));
+      } else {
+        klee_warning("Symbolic idx");
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+}
+
+static bool containsReadRelated(const std::set<SymRead> &SR,
+                                std::string SymName,
+                                const ref<PerryExpr> &PE)
+{
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (RE->Name == SymName) {
+        return true;
+      } else {
+        if (auto CE = dyn_cast<PerryConstantExpr>(RE->idx)) {
+          if (SR.end() !=
+              SR.find(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width)))
+          {
+            return true;
+          }
+        }
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return false;
+}
+
+static bool hasSameConstraints(std::vector<ref<PerryExpr>> &a,
+                               std::vector<ref<PerryExpr>> &b)
+{
+  if (a.size() != b.size()) {
+    return false;
+  }
+  auto numExpr = a.size();
+  for (size_t i = 0; i < numExpr; ++i) {
+    if (a[i]->compare(*b[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool
+isUniqueConstraints(std::vector<std::vector<ref<PerryExpr>>> &unique_constraints,
+                    std::vector<ref<PerryExpr>> &a)
+{
+  for (auto &CS : unique_constraints) {
+    if (hasSameConstraints(CS, a)) {
+      return false;
+    }
+  }
+  unique_constraints.push_back(a);
+  return true;
+}
+
+static bool
+containsReadOnlyTO(const ref<PerryExpr> &target, const SymRead &SR) {
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(target);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (E->getKind() == Expr::Read) {
+      auto RE = cast<PerryReadExpr>(E);
+      if (RE->Name != SR.name) {
+        return false;
+      }
+      if (RE->idx->getKind() != Expr::Constant) {
+        return false;
+      }
+      auto REidx = cast<PerryConstantExpr>(RE->idx);
+      SymRead tmpSR(SR.name, REidx->getAPValue().getZExtValue(), RE->getWidth());
+      if (!tmpSR.relatedWith(SR)) {
+        return false;
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return true;
+}
+
+// check whether `a` and `b` are in nested blocks. `b` is assumed to be in the
+// inner layer.
+// 1  means yes
+// 0  means no
+// -1 means don't know
+static int inNestedScope(Instruction *a, Instruction *b) {
+  // always return 1 when disabled
+  if (!EnableScopeHeuristic) {
+    return 1;
+  }
+
+  if (!a->hasMetadata(LLVMContext::MD_dbg) ||
+      !b->hasMetadata(LLVMContext::MD_dbg))
+  {
+    return -1;
+  }
+
+  MDNode *MA = a->getMetadata(LLVMContext::MD_dbg);
+  MDNode *MB = b->getMetadata(LLVMContext::MD_dbg);
+  DIScope *SA;
+  DIScope *SB;
+  if (MA->getMetadataID() == Metadata::MetadataKind::DILocationKind) {
+    auto DLA = cast<DILocation>(MA);
+    SA = DLA->getScope();
+  } else {
+    std::string tmp;
+    raw_string_ostream OS(tmp);
+    MA->print(OS);
+    klee_error("Cannot handle metadata %s", tmp.c_str());
+  }
+  if (MB->getMetadataID() == Metadata::MetadataKind::DILocationKind) {
+    auto DLB = cast<DILocation>(MB);
+    SB = DLB->getScope();
+  } else {
+    std::string tmp;
+    raw_string_ostream OS(tmp);
+    MB->print(OS);
+    klee_error("Cannot handle metadata %s", tmp.c_str());
+  }
+  if (SA == nullptr || SB == nullptr) {
+    return -1;
+  }
+
+  if (a->getParent()->getParent() != b->getParent()->getParent()) {
+    // cross function
+    return -1;
+  }
+
+  SA = SA->getScope();
+  SB = SB->getScope();
+  if (SA == nullptr || SB == nullptr) {
+    return -1;
+  }
+  if (SA == SB) {
+    // NOTE: this is somehow heuristic
+    return 0;
+  }
+
+  while (SB) {
+    if (SA == SB) {
+      return 1;
+    }
+    SB = SB->getScope();
+  }
+  return 0;
+}
+
+// -1: dont know
+//  0: not in loop condition
+//  1: yes
+static int inLoopCondition(Instruction *inst) {
+  using SrcLookUpMapValTy 
+    = std::set<std::pair<std::pair<unsigned, unsigned>, std::pair<unsigned, unsigned>>>;
+  using SrcLookUpMapTy = std::map<std::string, SrcLookUpMapValTy>;
+  static SrcLookUpMapTy LookUpMap;
+  if (!inst->hasMetadata(LLVMContext::MD_dbg)) {
+    return -1;
+  }
+  auto MDN = inst->getMetadata(LLVMContext::MD_dbg);
+  if (MDN->getMetadataID() != Metadata::DILocationKind) {
+    klee_error("inLoopCondition: unsupported metadata kind");
+  }
+  auto DILoc = cast<DILocation>(MDN);
+  auto read_line = DILoc->getLine();
+  auto read_col = DILoc->getColumn();
+  auto DScope = DILoc->getScope();
+  unsigned block_line, block_line_end;
+  unsigned block_col, block_col_end;
+
+  auto DIF = DScope->getFile();
+  if (!DIF) {
+    return -1;
+  }
+  auto file_path = (DIF->getDirectory() + "/" + DIF->getFilename()).str();
+  if (LookUpMap.find(file_path) != LookUpMap.end()) {
+    for (auto &p : LookUpMap[file_path]) {
+      if (read_line >= p.first.first && read_line <= p.second.first &&
+          read_col >= p.first.second && read_col <= p.second.second)
+      {
+        return 1;
+      }
+    }
+  } else {
+    // init the entry
+    LookUpMap.insert(std::make_pair(file_path, SrcLookUpMapValTy()));
+  }
+
+  block_line = read_line;
+  block_col = 0;    // read the whole line
+
+  // cannot locate 
+  // if (DScope->getMetadataID() != Metadata::DILexicalBlockKind) {
+  //   block_line = read_line;
+  //   block_col = 0;    // read the whole line
+  // } else {
+  //   auto DILB = cast<DILexicalBlock>(DScope);
+  //   block_line = DILB->getLine();
+  //   block_col = DILB->getColumn() - 1;
+  // }
+  std::ifstream src_file(file_path);
+  if (src_file.is_open()) {
+    std::string line;
+    unsigned cur_line_no = 0;
+    while (std::getline(src_file, line)) {
+      ++cur_line_no;
+      if (cur_line_no == block_line) {
+        break;
+      }
+    }
+    std::size_t while_pos;
+    auto tmp_col = block_col;
+    while (true) {
+      while_pos = line.find("while", tmp_col);
+      if (while_pos == std::string::npos) {
+        return 0;
+      }
+      if (while_pos > 0) {
+        if (!isspace(line[while_pos - 1])) {
+          if (isalnum(line[while_pos - 1]) || line[while_pos - 1] == '_') {
+            tmp_col = while_pos + 5;
+            continue;
+          }
+        }
+      }
+      if (while_pos + 5 < line.size() - 1) {
+        if (!isspace(line[while_pos + 5])) {
+          if (isalnum(line[while_pos + 5]) || line[while_pos + 5] == '_') {
+            tmp_col = while_pos + 5;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    while_pos += 5;
+    block_col = while_pos;
+    auto line_size = line.size();
+    std::stack<int> parenthesis;
+    while (while_pos < line_size) {
+      char cur_char = line[while_pos];
+      if (cur_char == '(') {
+        parenthesis.push(0);
+      } else if (cur_char == ')') {
+        parenthesis.pop();
+        if (parenthesis.empty()) {
+          block_col_end = while_pos;
+          break;
+        }
+      }
+      ++while_pos;
+    }
+    block_line_end = block_line;
+    if (!parenthesis.empty()) {
+      // we need to read more
+      while (true) {
+        std::string next_line;
+        if (std::getline(src_file, next_line)) {
+          ++block_line_end;
+          unsigned next_line_size = next_line.size();
+          unsigned ii;
+          for (ii = 0; ii < next_line_size; ++ii) {
+            char this_char = next_line[ii];
+            if (this_char == '(') {
+              parenthesis.push(0);
+            } else if (this_char == ')') {
+              parenthesis.pop();
+              if (parenthesis.empty()) {
+                block_col_end = ii;
+                break;
+              }
+            }
+          }
+          if (parenthesis.empty()) {
+            break;
+          }
+        } else {
+          klee_error("should not happen");
+        }
+      }
+    }
+    block_col += 1;
+    block_col_end += 1;
+    LookUpMap[file_path].insert(
+      std::make_pair(std::make_pair(block_line, block_col),
+                     std::make_pair(block_line_end, block_col_end)));
+    if (read_line >= block_line && read_line <= block_line_end &&
+        read_col >= block_col && read_col <= block_col_end)
+    {
+      return 1;
+    } else {
+      return 0;
+    }
+  } else {
+    klee_error("cannot open src file %s", file_path.c_str());
+  }
+}
+
+static void
+postProcess(const std::set<std::string> &TopLevelFunctions,
+            const std::map<std::string, std::string> &FunctionToSymbolName,
+            const std::map<std::string, std::vector<PerryRecord>> &allRecords,
+            const TaintSet &liveTaint,
+            const std::map<std::string, std::set<uint64_t>> &OkValuesMap,
+            ControlDependenceGraphPass::NodeMap &nm)
+{
+  TaintSet byReg;
+  for (auto t : liveTaint) {
+    addTaint(byReg, t & 0xff000000);
+  }
+  std::cerr << "Possible data registers: ";
+  for (auto t : byReg) {
+    std::cerr << t << ", ";
+  }
+  std::cerr << "\n";
+
+  std::vector<std::vector<ref<PerryExpr>>> unique_constraints_read,
+                                           unique_constraints_write,
+                                           unique_constraints_irq,
+                                           unique_constraints_between_writes,
+                                           unique_constraints_final,
+                                           unique_rr_constraint;
+  std::set<unsigned> writtenDataRegIdx, readDataRegIdx;
+  PerryRRDependentMap rrDepMap;
+  PerryWRDependentMap wrDepMap;
+
+  bool isIRQ = false;
+  PerryZ3Builder z3builder;
+  for (auto TopFunc : TopLevelFunctions) {
+    assert(FunctionToSymbolName.find(TopFunc) != FunctionToSymbolName.end());
+    isIRQ = (TopFunc.find("IRQHandler") != std::string::npos);
+    auto SymName = FunctionToSymbolName.at(TopFunc);
+    auto &Record = allRecords.at(TopFunc);
+    const std::set<uint64_t> *OkVals = nullptr;
+    if (OkValuesMap.find(TopFunc) != OkValuesMap.end()) {
+      OkVals = &OkValuesMap.at(TopFunc);
+    }
+
+    // all state
+    unsigned state_idx = 0;
+    // for (auto &TR : Trace) {
+    for (auto &rec : Record) {
+      // single state
+      auto &trace = rec.trace;
+      auto &final_constraints = rec.final_constraints;
+      auto returned_value = rec.return_value;
+      auto &reg_accesses = rec.register_accesses;
+      auto success_return = rec.success;
+      state_idx += 1;
+      std::vector<ref<PerryExpr>> lastWriteConstraint;
+      bool hasWrite = false;
+      bool hasRead = false;
+      bool hasNonDataRead = false;
+      for (auto &PTI : trace) {
+        auto &cur_access = reg_accesses[PTI.reg_access_idx];
+        if (cur_access->AccessType == RegisterAccess::REG_READ) {
+          // not a data register
+          if (byReg.find(cur_access->idx & 0xff000000) == byReg.end()) {
+            hasNonDataRead = true;
+            continue;
+          }
+          // is a data register, but the read has no taint
+          auto &ts = trace.getTaintSet();
+          if (ts.find(cur_access->idx) == ts.end()) {
+            continue;
+          }
+        } else {
+          // write to non-data registers are ignored
+          if (byReg.find(cur_access->idx & 0xff000000) == byReg.end()) {
+            continue;
+          }
+        }
+
+        std::vector<ref<PerryExpr>> RegConstraint;
+        unsigned cs_cur_num = PTI.constraint_idx;
+        for (unsigned i = 0; i < cs_cur_num; ++i) {
+          auto &CS = final_constraints[i];
+          if (containsReadTo(SymName, CS)) {
+            RegConstraint.push_back(CS);
+          }
+        }
+        
+        if (cur_access->AccessType == RegisterAccess::REG_READ) {
+          hasRead = true;
+          // readDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
+          readDataRegIdx.insert(cur_access->offset);
+          if (!isUniqueConstraints(unique_constraints_read, RegConstraint)) {
+            continue;
+          } else {
+            if (isIRQ) {
+              unique_constraints_irq.push_back(RegConstraint);
+            }
+          }
+        } else {
+          // writtenDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
+          writtenDataRegIdx.insert(cur_access->offset);
+          hasWrite = true;
+          if (!lastWriteConstraint.empty()) {
+            // diff
+            unsigned lastSize = lastWriteConstraint.size();
+            unsigned thisSize = RegConstraint.size();
+
+            std::vector<ref<PerryExpr>> diffExpr;
+            for (unsigned i = lastSize; i < thisSize; ++i) {
+              diffExpr.push_back(RegConstraint[i]);
+            }
+            if (!diffExpr.empty()) {
+              (void)
+              isUniqueConstraints(unique_constraints_between_writes, diffExpr);
+            }
+          }
+          lastWriteConstraint = RegConstraint;
+          if (!isUniqueConstraints(unique_constraints_write, RegConstraint)) {
+            continue;
+          } else {
+            if (isIRQ) {
+              unique_constraints_irq.push_back(RegConstraint);
+            }
+          }
+        }
+      }
+
+      if (success_return  &&
+          OkVals          &&
+          OkVals->find(returned_value) != OkVals->end())
+      {
+        // normal exit
+        // data register writes
+        if (hasWrite) {
+          std::vector<ref<PerryExpr>> finalCS;
+          for (auto &CS : final_constraints) {
+            if (containsReadTo(SymName, CS)) {
+              finalCS.push_back(CS);
+            }
+          }
+          unsigned finalSize = finalCS.size();
+          std::vector<ref<PerryExpr>> diffFinalCS;
+          for (unsigned i = lastWriteConstraint.size(); i < finalSize; ++i) {
+            diffFinalCS.push_back(finalCS[i]);
+          }
+          if (!diffFinalCS.empty()) {
+            unique_constraints_final.push_back(diffFinalCS);
+          }
+        }
+
+        // dependent non-data register reads
+        if (!hasRead && !hasWrite && hasNonDataRead) {
+          // infer reg linkage
+          // case 1: two adjacent in-constraint reads
+          // case 2: a in-constraint read and previous writes
+          unsigned last_idx = 0;
+          bool last_is_read = false;
+
+          unsigned trace_size = trace.size();
+          for (unsigned i = 0; i < trace_size; ++i) {
+            auto &PTI = trace[i];
+            unsigned num_cs = PTI.constraint_idx;
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+
+            if (cur_access->AccessType == RegisterAccess::REG_READ) {
+              if (last_is_read && last_idx != num_cs) {
+                // two adjacent reads, and new constraints are introduced.
+                // check whether the newly-introduced constraints contains
+                // the result of the previous read.
+                auto &last_PTI = trace[i - 1];
+                auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+                int depend_on_prev 
+                  = ControlDependenceGraphPass::isControlDependentOn(
+                    nm, cur_access->place->getParent(),
+                        last_access->place->getParent());
+                
+                if (inLoopCondition(cur_access->place) > 0 &&
+                    depend_on_prev == 1 && 
+                    inNestedScope(last_access->place, cur_access->place)) 
+                {
+                  auto last_result = last_access->ExprInReg;
+                  std::vector<ref<PerryExpr>> before_constraints,
+                                              after_constraints;
+                  std::set<SymRead> before_syms;
+                  collectContainedSym(last_result, before_syms);
+                  // look-before to find related constraints
+                  for (unsigned j = last_idx; j < num_cs; ++j) {
+                    if (containsReadRelated(before_syms, "", final_constraints[j])) {
+                      before_constraints.push_back(final_constraints[j]);
+                    }
+                  }
+                  if (!before_constraints.empty()) {
+                    // now we have a potential dependent pair
+                    // look-after to find the constraint this read must meet to 
+                    // successfully return
+                    unsigned num_constraint_on_read;
+                    if (i == trace_size - 1) {
+                      num_constraint_on_read = final_constraints.size();
+                    } else {
+                      num_constraint_on_read = trace[i + 1].constraint_idx;
+                    }
+                    auto this_result = cur_access->ExprInReg;
+                    std::set<SymRead> after_syms;
+                    collectContainedSym(this_result, after_syms);
+                    for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
+                      if (containsReadRelated(after_syms, "", final_constraints[j])) {
+                        after_constraints.push_back(final_constraints[j]);
+                        // this is somewhat tricky.
+                        // we only want the first related constraint, I think this
+                        // is resonable.
+                        break;
+                      }
+                    }
+                    if (!after_constraints.empty()) {
+                      DependentItem key(
+                        SymRead(cur_access->name,
+                                cur_access->offset,
+                                cur_access->width),
+                        this_result, after_constraints);
+                      if (rrDepMap.find(key) == rrDepMap.end()) {
+                        rrDepMap.insert(
+                          std::make_pair(key, std::set<DependentItem>()));
+                      }
+                      DependentItem val(
+                        SymRead(last_access->name,
+                                last_access->offset,
+                                last_access->width),
+                        last_result, before_constraints);
+                      rrDepMap[key].insert(val);
+                    }
+                  }
+                }
+              } else if (!last_is_read && i > 0) {
+                if (inLoopCondition(cur_access->place) > 0) {
+                  auto &last_PTI = trace[i - 1];
+                  auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+                  unsigned num_constraint_on_read;
+                  if (i == trace_size - 1) {
+                    num_constraint_on_read = final_constraints.size();
+                  } else {
+                    num_constraint_on_read = trace[i + 1].constraint_idx;
+                  }
+                  auto this_result = cur_access->ExprInReg;
+                  std::set<SymRead> after_syms;
+                  collectContainedSym(this_result, after_syms);
+                  std::vector<ref<PerryExpr>> after_constraints;
+                  for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
+                    if (containsReadRelated(after_syms, "", final_constraints[j])) {
+                      after_constraints.push_back(final_constraints[j]);
+                      break;
+                    }
+                  }
+                  if (!after_constraints.empty()) {
+                    // collect constraints on the written expression till this read, if any
+                    auto last_result = last_access->ExprInReg;
+                    std::set<SymRead> before_syms;
+                    collectContainedSym(last_result, before_syms);
+                    std::vector<ref<PerryExpr>> before_constraints;
+                    for (unsigned j = 0; j < num_cs; ++j) {
+                      if (containsReadRelated(before_syms, "", final_constraints[j])) {
+                        before_constraints.push_back(final_constraints[j]);
+                      }
+                    }
+                    DependentItem key(
+                      SymRead(cur_access->name,
+                              cur_access->offset,
+                              cur_access->width),
+                      this_result, after_constraints);
+                    if (wrDepMap.find(key) == wrDepMap.end()) {
+                      wrDepMap.insert(
+                        std::make_pair(key, std::set<DependentWItem>()));
+                    }
+                    // locate last write/read to this reg
+                    SymRead written_reg = SymRead(last_access->name,
+                                                  last_access->offset,
+                                                  last_access->width);
+                    ref<PerryExpr> before_expr = 0;
+                    SymRead cur_reg(written_reg);
+                    for (int j = i - 2; j >= 0; --j) {
+                      auto &cur_PTI = trace[j];
+                      auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+                      cur_reg = SymRead(tmp_access->name,
+                                        tmp_access->offset,
+                                        tmp_access->width);
+                      if (cur_reg.relatedWith(written_reg)) {
+                        before_expr = tmp_access->ExprInReg;
+                        break;
+                      }
+                    }
+                    DependentWItem val(
+                      written_reg, before_expr, last_result, before_constraints);
+                    if (before_expr) {
+                      val.before_sr = cur_reg;
+                    }
+                    wrDepMap[key].insert(val);
+                  }
+                }
+              }
+              last_is_read = true;
+              last_idx = num_cs;
+            } else {
+              last_is_read = false;
+              last_idx = num_cs;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // deal with read-read dependences
+  // the logic is: if some constraints on the value read from the first register
+  // is satisfied, some other constraints must be met on the second register
+  std::map<unsigned, unsigned> rr_expr_id_to_idx;
+  z3::expr_vector rr_conds(z3builder.getContext());
+  z3::expr_vector rr_actions_final(z3builder.getContext());
+  std::vector<z3::expr_vector> rr_actions;
+  for (auto &key : rrDepMap) {
+    // errs() << "rr##############################\n";
+    // errs() << key.first << "----------------------------\n";
+    z3::expr_vector val_constraints(z3builder.getContext());
+    for (auto &val : key.second) {
+      std::set<SymRead> fuckSyms;
+      collectContainedSym(val.expr, fuckSyms);
+      auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "", false, fuckSyms);
+      z3::expr_vector bit_level_expr(z3builder.getContext());
+      z3builder.getBitLevelExpr(val.expr, bit_level_expr);
+      auto bit_constraints
+        = z3builder.inferBitLevelConstraint(wis, val.read, bit_level_expr);
+      val_constraints.push_back(bit_constraints);
+    }
+    z3::expr final_val_constraint = z3::mk_and(val_constraints).simplify();
+    std::set<SymRead> keySyms;
+    collectContainedSym(key.first.expr, keySyms);
+    auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
+                                                 false, keySyms);
+    z3::expr_vector bit_level_expr_key(z3builder.getContext());
+    z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
+    auto bit_constraints_key
+      = z3builder.inferBitLevelConstraint(key_cs, key.first.read,
+                                          bit_level_expr_key);
+    bit_constraints_key = bit_constraints_key.simplify();
+    if (rr_expr_id_to_idx.find(final_val_constraint.id()) == rr_expr_id_to_idx.end()) {
+      rr_expr_id_to_idx.insert(std::make_pair(final_val_constraint.id(), rr_conds.size()));
+      rr_conds.push_back(final_val_constraint);
+      rr_actions.push_back(z3::expr_vector(z3builder.getContext()));
+    }
+    auto cur_idx = rr_expr_id_to_idx[final_val_constraint.id()];
+    rr_actions[cur_idx].push_back(bit_constraints_key);
+  }
+
+  // deal with write-read dependences
+  // the logic is: if some constraints on the written value is satisfied, some
+  // other constraints must be met on the register to be read
+  std::map<unsigned, unsigned> wr_expr_id_to_idx;
+  z3::expr_vector wr_conds(z3builder.getContext());
+  z3::expr_vector wr_actions_final(z3builder.getContext());
+  std::vector<z3::expr_vector> wr_actions;
+  for (auto &key : wrDepMap) {
+    // errs() << "wr##############################\n";
+    // errs() << key.first << "----------------------------\n";
+    z3::expr_vector val_constraints(z3builder.getContext());
+    for (auto &val : key.second) {
+      if (!val.constraints.empty()) {
+        // there're constraints on the written value
+        std::set<SymRead> fuckSyms;
+        collectContainedSym(val.after, fuckSyms);
+        // errs() << val << "...................................\n";
+        auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
+                                                  false, fuckSyms);
+        z3::expr_vector bit_level_expr_before(z3builder.getContext());
+        z3::expr_vector bit_level_expr_after(z3builder.getContext());
+        if (val.before) {
+          z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
+        }
+        z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
+        auto blacklist
+          = z3builder.inferBitLevelConstraintRaw(wis, val.before_sr,
+                                                 bit_level_expr_before);
+        
+        auto bit_constraints_after
+          = z3builder.inferBitLevelConstraintWithBlacklist(wis,
+                                                           val.write,
+                                                           blacklist,
+                                                           bit_level_expr_after);
+        val_constraints.push_back(bit_constraints_after);
+      } else {
+        // no constraint on the written value
+        if (!val.after->getKind() == Expr::Constant) {
+          // if the expr written into the register is not a constant, check:
+          if (containsReadOnlyTO(val.after, val.write)) {
+            // if only the register itself is contained in the expr:
+            // errs() << val << "...................................\n";
+            z3::expr_vector bit_level_expr_after(z3builder.getContext());
+            z3::expr_vector bit_level_expr_before(z3builder.getContext());
+            if (val.before) {
+              z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
+            }
+            z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
+            auto true_cs = z3builder.getContext().bool_val(true);
+            auto blacklist
+              = z3builder.inferBitLevelConstraintRaw(true_cs,
+                                                     val.before_sr,
+                                                     bit_level_expr_before);
+            
+            auto bit_constraints_after
+              = z3builder.inferBitLevelConstraintWithBlacklist(true_cs,
+                                                               val.write,
+                                                               blacklist,
+                                                               bit_level_expr_after);
+            val_constraints.push_back(bit_constraints_after);
+          } else {
+            // else, ignore
+            std::string tmp;
+            raw_string_ostream OS(tmp);
+            val.after->print(OS);
+            klee_warning_once(
+              0,
+              "[WR Dep] No constraint on the written symbolic expression: %s\n%s",
+              tmp.c_str(), val.write.to_string().c_str());
+            continue;
+          }
+        } else {
+          // the written value is constrained to be this constant
+          auto PCE = cast<PerryConstantExpr>(val.after);
+          val_constraints.push_back(
+            z3builder.getConstantConstraint(val.write,
+                                            PCE->getAPValue().getZExtValue()));
+        }
+      }
+    }
+    z3::expr final_val_constraint = z3::mk_and(val_constraints).simplify();
+    std::set<SymRead> keySyms;
+    collectContainedSym(key.first.expr, keySyms);
+    auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
+                                                 false, keySyms);
+    z3::expr_vector bit_level_expr_key(z3builder.getContext());
+    z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
+    auto bit_constraints_key
+      = z3builder.inferBitLevelConstraint(key_cs, key.first.read, bit_level_expr_key);
+    bit_constraints_key = bit_constraints_key.simplify();
+    if (bit_constraints_key.is_true()) {
+      // post constraints are not enough to resolve the constraint on this register
+      // this can happen when symbols are compared with symbols.
+      // We additionally add constraints on the previously written value and repeat
+      // this process. Hopefully this can help.
+      z3::expr_vector tmp_vec(z3builder.getContext());
+      for (auto &val : key.second) {
+        if (val.constraints.empty()) {
+          continue;
+        }
+        std::set<SymRead> fuckSyms;
+        collectContainedSym(val.after, fuckSyms);
+        auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
+                                                  false, fuckSyms);
+        tmp_vec.push_back(wis);
+      }
+      tmp_vec.push_back(key_cs);
+      key_cs = z3::mk_and(tmp_vec);
+      key_cs = key_cs.simplify();
+      z3::expr_vector bit_level_expr_again(z3builder.getContext());
+      z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
+      bit_constraints_key
+        = z3builder.inferBitLevelConstraint(key_cs, key.first.read,
+                                            bit_level_expr_again);
+      bit_constraints_key = bit_constraints_key.simplify();
+    }
+    if (wr_expr_id_to_idx.find(final_val_constraint.id()) ==
+        wr_expr_id_to_idx.end())
+    {
+      wr_expr_id_to_idx.insert(
+        std::make_pair(final_val_constraint.id(), wr_conds.size()));
+      wr_conds.push_back(final_val_constraint);
+      wr_actions.push_back(z3::expr_vector(z3builder.getContext()));
+    }
+    auto cur_idx = wr_expr_id_to_idx[final_val_constraint.id()];
+    wr_actions[cur_idx].push_back(bit_constraints_key);
+  }
+  
+  z3::solver s(z3builder.getContext());
+  
+  // TODO: this is ugly, consider refining this
+  std::string SymName = FunctionToSymbolName.at(*(TopLevelFunctions.begin()));
+
+  std::string OP = PerryOutputFile;
+  if (OP.empty()) {
+    klee_warning("Empty output file path for Perry, default to perry-out.json");
+    OP = "./perry-out.json";
+  }
+  FILE *OF = fopen(OP.c_str(), "w");
+  if (!OF) {
+    klee_error("Failed to open output file");
+  }
+  std::string OutContent;
+  OutContent += "{\n";
+
+  // read data registers
+  OutContent += "\t\"RD\": [";
+  for (auto RD : readDataRegIdx) {
+    OutContent += std::to_string(RD);
+    OutContent += ", ";
+  }
+  if (!readDataRegIdx.empty()) {
+    OutContent = OutContent.substr(0, OutContent.size() - 2);
+  }
+  OutContent += "],\n";
+  // wirtten data registers
+  OutContent += "\t\"WD\": [";
+  for (auto RD : writtenDataRegIdx) {
+    OutContent += std::to_string(RD);
+    OutContent += ", ";
+  }
+  if (!writtenDataRegIdx.empty()) {
+    OutContent = OutContent.substr(0, OutContent.size() - 2);
+  }
+  OutContent += "],\n";
+
+  // add constraints
+  std::regex LineBreak("\n");
+  OutContent += "\t\"read_constraint\": \"";
+  if (unique_constraints_read.size() > 0) {
+    std::cerr << "read constraint: \n";
+    auto rc = z3builder.getLogicalBitExprBatchOr(unique_constraints_read, SymName);
+    std::cerr << rc << "\n";
+    s.add(rc);
+    std::cerr << s.check() << "\n";
+    std::cerr << s.get_model() << "\n";
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+  }
+  OutContent += "\",\n";
+
+  OutContent += "\t\"write_constraint\": \"";
+  if (unique_constraints_write.size() > 0) {
+    std::cerr << "\nwrite constraint: \n";
+    auto wc = z3builder.getLogicalBitExprBatchOr(unique_constraints_write, SymName);
+    std::cerr << wc << "\n";
+    s.reset();
+    s.add(wc);
+    std::cerr << s.check() << "\n";
+    std::cerr << s.get_model() << "\n";
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+  }
+  OutContent += "\",\n";
+
+  OutContent += "\t\"irq_constraint\": \"";
+  if (unique_constraints_irq.size() > 0) {
+    std::cerr << "\nirq constraint: \n";
+    auto wc = z3builder.getLogicalBitExprBatchOr(unique_constraints_irq, SymName);
+    std::cerr << wc << "\n";
+    s.reset();
+    s.add(wc);
+    std::cerr << s.check() << "\n";
+    std::cerr << s.get_model() << "\n";
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+  }
+  OutContent += "\",\n";
+
+  OutContent += "\t\"between_writes_constraint\": \"";
+  if (unique_constraints_between_writes.size() > 0) {
+    std::cerr << "\nconstraint between writes: \n";
+    auto wc = z3builder.getLogicalBitExprBatchOr(unique_constraints_between_writes, SymName);
+    std::cerr << wc << "\n";
+    s.reset();
+    s.add(wc);
+    std::cerr << s.check() << "\n";
+    std::cerr << s.get_model() << "\n";
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+  }
+  OutContent += "\",\n";
+
+  OutContent += "\t\"post_writes_constraint\": \"";
+  if (unique_constraints_final.size() > 0) {
+    std::cerr << "\nconstraint final diff: \n";
+    auto wc = z3builder.getLogicalBitExprBatchOr(unique_constraints_final, SymName);
+    std::cerr << wc << "\n";
+    s.reset();
+    s.add(wc);
+    std::cerr << s.check() << "\n";
+    std::cerr << s.get_model() << "\n";
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+  }
+  OutContent += "\",\n";
+
+  
+  // condition-action lists
+  OutContent += "\t\"cond_actions\": [\n";
+  unsigned num_conds = rr_conds.size();
+  bool has_cond_action_content = false;
+  for (unsigned i = 0; i < num_conds; ++i) {
+    auto &action_set = rr_actions[i];
+    // this is safe
+    auto final_action = z3builder.getLogicalBitExprOr(action_set, false, true);
+    if (final_action.is_true()) {
+      klee_warning("Failed to infer actions for condition: %s",
+                   rr_conds[i].to_string().c_str());
+      continue;
+    }
+    has_cond_action_content = true;
+    rr_actions_final.push_back(final_action);
+    std::cerr << "RR Rule: ##################################\n"
+              << "When:\n"
+              << rr_conds[i]
+              << "\nholds, take the following action:\n"
+              << final_action
+              << "\n";
+    OutContent += "\t\t{\n";
+    OutContent += "\t\t\t\"cond\": \"";
+    s.reset();
+    s.add(rr_conds[i]);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\",\n";
+    OutContent += "\t\t\t\"action\": \"";
+    s.reset();
+    s.add(final_action);
+    smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"\n";
+    OutContent += "\t\t},\n";
+  }
+  
+  num_conds = wr_conds.size();
+  for (unsigned i = 0; i < num_conds; ++i) {
+    auto &action_set = wr_actions[i];
+    auto final_action = z3builder.getLogicalBitExprOr(action_set, false, true);
+    if (final_action.is_true()) {
+      klee_warning("Failed to infer actions for condition: %s",
+                   wr_conds[i].to_string().c_str());
+      continue;
+    }
+    has_cond_action_content = true;
+    wr_actions_final.push_back(final_action);
+    std::cerr << "WR Rule: ##################################\n"
+              << "When:\n"
+              << wr_conds[i]
+              << "\nholds, take the following action:\n"
+              << final_action
+              << "\n";
+    OutContent += "\t\t{\n";
+    OutContent += "\t\t\t\"cond\": \"";
+    s.reset();
+    s.add(wr_conds[i]);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\",\n";
+    OutContent += "\t\t\t\"action\": \"";
+    s.reset();
+    s.add(final_action);
+    smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"\n";
+    OutContent += "\t\t},\n";
+  }
+  if (has_cond_action_content) {
+    OutContent = OutContent.substr(0, OutContent.length() - 2);
+    OutContent += "\n";
+  }
+  OutContent += "\t]\n";
+
+  OutContent += "}";
+  fwrite(OutContent.c_str(), 1, OutContent.size(), OF);
+  fclose(OF);
+}
+
+int main(int argc, char **argv) {
   atexit(llvm_shutdown);  // Call llvm_shutdown() on exit.
 
 #if LLVM_VERSION_CODE >= LLVM_VERSION(13, 0)
@@ -1166,74 +2215,6 @@ int main(int argc, char **argv, char **envp) {
 
   parseArguments(argc, argv);
   sys::PrintStackTraceOnErrorSignal(argv[0]);
-
-  if (Watchdog) {
-    if (MaxTime.empty()) {
-      klee_error("--watchdog used without --max-time");
-    }
-
-    int pid = fork();
-    if (pid<0) {
-      klee_error("unable to fork watchdog");
-    } else if (pid) {
-      klee_message("KLEE: WATCHDOG: watching %d\n", pid);
-      fflush(stderr);
-      sys::SetInterruptFunction(interrupt_handle_watchdog);
-
-      const time::Span maxTime(MaxTime);
-      auto nextStep = time::getWallTime() + maxTime + (maxTime / 10);
-      int level = 0;
-
-      // Simple stupid code...
-      while (1) {
-        sleep(1);
-
-        int status, res = waitpid(pid, &status, WNOHANG);
-
-        if (res < 0) {
-          if (errno==ECHILD) { // No child, no need to watch but
-                               // return error since we didn't catch
-                               // the exit.
-            klee_warning("KLEE: watchdog exiting (no child)\n");
-            return 1;
-          } else if (errno!=EINTR) {
-            perror("watchdog waitpid");
-            exit(1);
-          }
-        } else if (res==pid && WIFEXITED(status)) {
-          return WEXITSTATUS(status);
-        } else {
-          auto time = time::getWallTime();
-
-          if (time > nextStep) {
-            ++level;
-
-            if (level==1) {
-              klee_warning(
-                  "KLEE: WATCHDOG: time expired, attempting halt via INT\n");
-              kill(pid, SIGINT);
-            } else if (level==2) {
-              klee_warning(
-                  "KLEE: WATCHDOG: time expired, attempting halt via gdb\n");
-              halt_via_gdb(pid);
-            } else {
-              klee_warning(
-                  "KLEE: WATCHDOG: kill(9)ing child (I tried to be nice)\n");
-              kill(pid, SIGKILL);
-              return 1; // what more can we do
-            }
-
-            // Ideally this triggers a dump, which may take a while,
-            // so try and give the process extra time to clean up.
-            auto max = std::max(time::seconds(15), maxTime / 10);
-            nextStep = time::getWallTime() + max;
-          }
-        }
-      }
-
-      return 0;
-    }
-  }
 
   sys::SetInterruptFunction(interrupt_handle);
 
@@ -1257,24 +2238,24 @@ int main(int argc, char **argv, char **envp) {
 
   llvm::Module *mainModule = M.get();
 
-  const std::string &module_triple = mainModule->getTargetTriple();
-  std::string host_triple = llvm::sys::getDefaultTargetTriple();
+  std::set<std::string> TopLevelFunctions;
+  std::map<StructOffset, std::set<std::string>> PtrFunction;
+  std::map<std::string, std::set<uint64_t>> OkValuesMap;
+  collectTopLevelFunctions(*mainModule, TopLevelFunctions, PtrFunction,
+                           OkValuesMap);
+  EntryPoint = *TopLevelFunctions.begin();
 
-  if (module_triple != host_triple)
-    klee_warning("Module and host target triples do not match: '%s' != '%s'\n"
-                 "This may cause unexpected crashes or assertion violations.",
-                 module_triple.c_str(), host_triple.c_str());
-
-  // Detect architecture
-  std::string opt_suffix = "64"; // Fall back to 64bit
-  if (module_triple.find("i686") != std::string::npos ||
-      module_triple.find("i586") != std::string::npos ||
-      module_triple.find("i486") != std::string::npos ||
-      module_triple.find("i386") != std::string::npos)
-    opt_suffix = "32";
+  // most MCUs are 32-bit
+  std::string opt_suffix = "32";
 
   // Add additional user-selected suffix
   opt_suffix += "_" + RuntimeBuild.getValue();
+
+  // TODO: seperate difference cpu
+  if (ARMCPUVersion.empty()) {
+    klee_error("Must specify CPU version");
+  }
+  opt_suffix += "_" + ARMCPUVersion.getValue();
 
   // Push the module as the first entry
   loadedModules.emplace_back(std::move(M));
@@ -1284,6 +2265,9 @@ int main(int argc, char **argv, char **envp) {
                                   /*Optimize=*/OptimizeModule,
                                   /*CheckDivZero=*/CheckDivZero,
                                   /*CheckOvershift=*/CheckOvershift);
+  Opts.TopLevelFunctions = TopLevelFunctions;
+  Opts.PtrFunction = PtrFunction;
+  Opts.OkValuesMap = OkValuesMap;
 
   if (WithPOSIXRuntime) {
     SmallString<128> Path(Opts.LibraryDir);
@@ -1348,6 +2332,9 @@ int main(int argc, char **argv, char **envp) {
   case LibcType::UcLibc:
     linkWithUclibc(LibraryDir, opt_suffix, loadedModules);
     break;
+  case LibcType::NopNotNever:
+    // do nothing
+    break;
   }
 
   for (const auto &library : LinkLibraries) {
@@ -1357,93 +2344,148 @@ int main(int argc, char **argv, char **envp) {
                  errorMsg.c_str());
   }
 
-  // FIXME: Change me to std types.
-  int pArgc;
-  char **pArgv;
-  char **pEnvp;
-  if (Environ != "") {
-    std::vector<std::string> items;
-    std::ifstream f(Environ.c_str());
-    if (!f.good())
-      klee_error("unable to open --environ file: %s", Environ.c_str());
-    while (!f.eof()) {
-      std::string line;
-      std::getline(f, line);
-      line = strip(line);
-      if (!line.empty())
-        items.push_back(line);
-    }
-    f.close();
-    pEnvp = new char *[items.size()+1];
-    unsigned i=0;
-    for (; i != items.size(); ++i)
-      pEnvp[i] = strdup(items[i].c_str());
-    pEnvp[i] = 0;
-  } else {
-    pEnvp = envp;
-  }
+  // All modules are loaded till here
 
-  pArgc = InputArgv.size() + 1;
-  pArgv = new char *[pArgc];
-  for (unsigned i=0; i<InputArgv.size()+1; i++) {
-    std::string &arg = (i==0 ? InputFile : InputArgv[i-1]);
-    unsigned size = arg.size() + 1;
-    char *pArg = new char[size];
+  // Craft a long-standing KModule
+  KModule *kmodule = new KModule();
+  std::map<std::string, std::string> FunctionToSymbolName;
+  kmodule->setupAll(loadedModules, Opts, FunctionToSymbolName);
+  ControlDependenceGraphPass::NodeSet ns;
+  ControlDependenceGraphPass::NodeMap nm;
+  kmodule->prepareCDG(TopLevelFunctions, ns, nm);
+  externalsAndGlobalsCheck(kmodule->module.get());
 
-    std::copy(arg.begin(), arg.end(), pArg);
-    pArg[size - 1] = 0;
-
-    pArgv[i] = pArg;
-  }
-
+  // maybe we only need to replay the path
   std::vector<bool> replayPath;
-
-  if (ReplayPathFile != "") {
-    KleeHandler::loadPathFile(ReplayPathFile, replayPath);
-  }
-
   Interpreter::InterpreterOptions IOpts;
+  setInterpreterOptions(IOpts, Interpreter::TaintOption::DirectTaint,
+                        false, 0);
+  signal(SIGALRM, timeoutHandler);
+  sys::SetInterruptFunction(interrupt_handle_watchdog);
+  TaintSet liveTaint;
+  std::vector<PerryRecord> records;
+  std::map<std::string, std::vector<PerryRecord>> all_records;
+  PerryExprManager PEM;
 
-  switch (Taint)
-  {
-    case Interpreter::TaintOption::NoTaint:
-      klee_message("Disable taint tracking");
-      break;
-    case Interpreter::TaintOption::DirectTaint:
-      klee_message("Enable taint tracking, mode: DIRECT");
-      break;
-    default:
-      klee_warning("Unresolved taint option, default to NoTaint");
-      Taint = Interpreter::TaintOption::NoTaint;
-      break;
+  for (auto TopFunc : TopLevelFunctions) {
+    records.clear();
+    singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
+              liveTaint, records, PEM);
+    all_records[TopFunc] = std::move(records);
   }
-  IOpts.TaintOpt = Interpreter::TaintOption(Taint);
-  IOpts.CollectTaintedCond = CollectTaintedCond;
 
-  IOpts.MakeConcreteSymbolic = MakeConcreteSymbolic;
-  KleeHandler *handler = new KleeHandler(pArgc, pArgv);
+  postProcess(TopLevelFunctions, FunctionToSymbolName, all_records, liveTaint,
+              OkValuesMap, nm);
+
+  // release memory
+  delete kmodule;
+  for (auto node : ns) {
+    delete node;
+  }
+
+  return 0;
+}
+
+static void daemonWaitFeedback(int fd, TaintSet &ts) {
+  TaintTy t;
+  while (1) {
+    if (read(fd, &t, sizeof(t)) != sizeof(t)) {
+      break;
+    }
+    ts.insert(t);
+  }
+  close(fd);
+}
+
+static void runDaemon(int pid, int wfd, int rfd, TaintSet &ts) {
+  workerPID = pid;
+  klee_message("PERRY: daemon started, watching %d", pid);
+  fflush(stderr);
+
+  time::Span seconds;
+  bool TimeIsGiven = !MaxTime.empty();
+  if (TimeIsGiven) {
+    seconds = time::Span(MaxTime);
+  }
+
+  itimerval it;
+  if (TimeIsGiven) {
+    klee_message(
+      "PERRY: watchdog started, the target will be halted after %ld seconds",
+      seconds.toMicroseconds() / 1000000);
+      
+      // setup the timer
+      it.it_value.tv_usec = seconds.toMicroseconds();
+      it.it_value.tv_sec = it.it_value.tv_usec / 1000000;
+      setitimer(ITIMER_REAL, &it, NULL);
+  }
+
+  // inform child that we're ready
+  int status;
+  if (write(wfd, &status, sizeof(status)) != sizeof(status)) {
+    klee_error("Failed to write pipe");
+  }
+  daemonWaitFeedback(rfd, ts);
+  close(wfd);
+  int res = waitpid(pid, &status, 0);
+
+  if (TimeIsGiven) {
+    // stop the timer
+    it.it_value.tv_sec = 0;
+    it.it_value.tv_usec = 0;
+    setitimer(ITIMER_REAL, &it, NULL);
+  }
+
+  // child exits
+  if (res < 0) {
+    if (errno == ECHILD) {
+      klee_warning("KLEE: daemon exiting (no child)");
+    } if (errno != EINTR) {
+      perror("watchdog waitpid");
+      exit(1);
+    }
+  } else if (res == pid && WIFEXITED(status)) {
+    klee_message(
+      "KLEE: child exit caught in daemon\n"
+      "######################################################################");
+  } else {
+    klee_warning("KLEE: error");
+  }
+}
+
+static void runKlee(std::vector<bool> &replayPath,
+                    Interpreter::InterpreterOptions &IOpts,
+                    LLVMContext &ctx,
+                    Interpreter::ModuleOptions &Opts,
+                    KModule *kmodule,
+                    std::string mainFunctionName,
+                    TaintSet &ts,
+                    int fd,
+                    std::vector<PerryRecord> &records,
+                    PerryExprManager &PEM)
+{
+  KleeHandler *handler = new KleeHandler(0, nullptr);
   Interpreter *interpreter =
-    theInterpreter = Interpreter::create(ctx, IOpts, handler);
+    theInterpreter = Interpreter::create(ctx, IOpts, handler, PEM);
   assert(interpreter);
   handler->setInterpreter(interpreter);
 
-  for (int i=0; i<argc; i++) {
-    handler->getInfoStream() << argv[i] << (i+1<argc ? " ":"\n");
-  }
   handler->getInfoStream() << "PID: " << getpid() << "\n";
 
   // Get the desired main function.  klee_main initializes uClibc
   // locale and other data and then calls main.
 
-  auto finalModule = interpreter->setModule(loadedModules, Opts);
-  Function *mainFn = finalModule->getFunction(EntryPoint);
+  // auto finalModule = interpreter->setModule(loadedModules, Opts);
+  auto finalModule
+    = interpreter->setModuleNoFuss(std::unique_ptr<KModule>(kmodule), Opts);
+  interpreter->outputModuleManifest();
+  Function *mainFn = finalModule->getFunction(mainFunctionName);
   if (!mainFn) {
-    klee_error("Entry function '%s' not found in module.", EntryPoint.c_str());
+    klee_error("Entry function '%s' not found in module.",
+               mainFunctionName.c_str());
   }
 
-  externalsAndGlobalsCheck(finalModule);
-
-  if (ReplayPathFile != "") {
+  if (!replayPath.empty()) {
     interpreter->setReplayPath(&replayPath);
   }
 
@@ -1458,100 +2500,51 @@ int main(int argc, char **argv, char **envp) {
     handler->getInfoStream().flush();
   }
 
-  if (!ReplayKTestDir.empty() || !ReplayKTestFile.empty()) {
-    assert(SeedOutFile.empty());
-    assert(SeedOutDir.empty());
-
-    std::vector<std::string> kTestFiles = ReplayKTestFile;
+  std::vector<KTest *> seeds;
+  for (std::vector<std::string>::iterator
+          it = SeedOutFile.begin(), ie = SeedOutFile.end();
+        it != ie; ++it) {
+    KTest *out = kTest_fromFile(it->c_str());
+    if (!out) {
+      klee_error("unable to open: %s\n", (*it).c_str());
+    }
+    seeds.push_back(out);
+  }
+  for (std::vector<std::string>::iterator
+          it = SeedOutDir.begin(), ie = SeedOutDir.end();
+        it != ie; ++it) {
+    std::vector<std::string> kTestFiles;
+    KleeHandler::getKTestFilesInDir(*it, kTestFiles);
     for (std::vector<std::string>::iterator
-           it = ReplayKTestDir.begin(), ie = ReplayKTestDir.end();
-         it != ie; ++it)
-      KleeHandler::getKTestFilesInDir(*it, kTestFiles);
-    std::vector<KTest*> kTests;
-    for (std::vector<std::string>::iterator
-           it = kTestFiles.begin(), ie = kTestFiles.end();
-         it != ie; ++it) {
-      KTest *out = kTest_fromFile(it->c_str());
-      if (out) {
-        kTests.push_back(out);
-      } else {
-        klee_warning("unable to open: %s\n", (*it).c_str());
-      }
-    }
-
-    if (RunInDir != "") {
-      int res = chdir(RunInDir.c_str());
-      if (res < 0) {
-        klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
-                   sys::StrError(errno).c_str());
-      }
-    }
-
-    unsigned i=0;
-    for (std::vector<KTest*>::iterator
-           it = kTests.begin(), ie = kTests.end();
-         it != ie; ++it) {
-      KTest *out = *it;
-      interpreter->setReplayKTest(out);
-      llvm::errs() << "KLEE: replaying: " << *it << " (" << kTest_numBytes(out)
-                   << " bytes)"
-                   << " (" << ++i << "/" << kTestFiles.size() << ")\n";
-      // XXX should put envp in .ktest ?
-      interpreter->runFunctionAsMain(mainFn, out->numArgs, out->args, pEnvp);
-      if (interrupted) break;
-    }
-    interpreter->setReplayKTest(0);
-    while (!kTests.empty()) {
-      kTest_free(kTests.back());
-      kTests.pop_back();
-    }
-  } else {
-    std::vector<KTest *> seeds;
-    for (std::vector<std::string>::iterator
-           it = SeedOutFile.begin(), ie = SeedOutFile.end();
-         it != ie; ++it) {
-      KTest *out = kTest_fromFile(it->c_str());
+            it2 = kTestFiles.begin(), ie = kTestFiles.end();
+          it2 != ie; ++it2) {
+      KTest *out = kTest_fromFile(it2->c_str());
       if (!out) {
-        klee_error("unable to open: %s\n", (*it).c_str());
+        klee_error("unable to open: %s\n", (*it2).c_str());
       }
       seeds.push_back(out);
     }
-    for (std::vector<std::string>::iterator
-           it = SeedOutDir.begin(), ie = SeedOutDir.end();
-         it != ie; ++it) {
-      std::vector<std::string> kTestFiles;
-      KleeHandler::getKTestFilesInDir(*it, kTestFiles);
-      for (std::vector<std::string>::iterator
-             it2 = kTestFiles.begin(), ie = kTestFiles.end();
-           it2 != ie; ++it2) {
-        KTest *out = kTest_fromFile(it2->c_str());
-        if (!out) {
-          klee_error("unable to open: %s\n", (*it2).c_str());
-        }
-        seeds.push_back(out);
-      }
-      if (kTestFiles.empty()) {
-        klee_error("seeds directory is empty: %s\n", (*it).c_str());
-      }
+    if (kTestFiles.empty()) {
+      klee_error("seeds directory is empty: %s\n", (*it).c_str());
     }
+  }
 
-    if (!seeds.empty()) {
-      klee_message("KLEE: using %lu seeds\n", seeds.size());
-      interpreter->useSeeds(&seeds);
+  if (!seeds.empty()) {
+    klee_message("KLEE: using %lu seeds\n", seeds.size());
+    interpreter->useSeeds(&seeds);
+  }
+  if (RunInDir != "") {
+    int res = chdir(RunInDir.c_str());
+    if (res < 0) {
+      klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
+                  sys::StrError(errno).c_str());
     }
-    if (RunInDir != "") {
-      int res = chdir(RunInDir.c_str());
-      if (res < 0) {
-        klee_error("Unable to change directory to: %s - %s", RunInDir.c_str(),
-                   sys::StrError(errno).c_str());
-      }
-    }
-    interpreter->runFunctionAsMain(mainFn, pArgc, pArgv, pEnvp);
+  }
+  interpreter->runFunctionJustAsIt(mainFn);
 
-    while (!seeds.empty()) {
-      kTest_free(seeds.back());
-      seeds.pop_back();
-    }
+  while (!seeds.empty()) {
+    kTest_free(seeds.back());
+    seeds.pop_back();
   }
 
   auto endTime = std::time(nullptr);
@@ -1573,53 +2566,32 @@ int main(int argc, char **argv, char **envp) {
     handler->getInfoStream().flush();
   }
 
-  // Free all the args.
-  for (unsigned i=0; i<InputArgv.size()+1; i++)
-    delete[] pArgv[i];
-  delete[] pArgv;
-
+  /// IMPORTANT: keep the universal KModule between runs
+  if (!Watchdog) {
+    // the same process, just get to it!
+    mergeTaint(ts, *interpreter->collectLiveTaints());
+    interpreter->collectPerryRecords(records);
+  } else {
+    klee_error("Not supported yet");
+    // pipe
+    for (auto t : *interpreter->collectLiveTaints()) {
+      (void) write(fd, &t, sizeof(t));
+    }
+    close(fd);
+  }
+  interpreter->leakUniversalKModule();
   delete interpreter;
 
-  uint64_t queries =
-    *theStatisticManager->getStatisticByName("Queries");
-  uint64_t queriesValid =
-    *theStatisticManager->getStatisticByName("QueriesValid");
-  uint64_t queriesInvalid =
-    *theStatisticManager->getStatisticByName("QueriesInvalid");
-  uint64_t queryCounterexamples =
-    *theStatisticManager->getStatisticByName("QueriesCEX");
-  uint64_t queryConstructs =
-    *theStatisticManager->getStatisticByName("QueryConstructs");
-  uint64_t instructions =
-    *theStatisticManager->getStatisticByName("Instructions");
-  uint64_t forks =
-    *theStatisticManager->getStatisticByName("Forks");
-
-  handler->getInfoStream()
-    << "KLEE: done: explored paths = " << 1 + forks << "\n";
-
-  // Write some extra information in the info file which users won't
-  // necessarily care about or understand.
-  if (queries)
-    handler->getInfoStream()
-      << "KLEE: done: avg. constructs per query = "
-                             << queryConstructs / queries << "\n";
-  handler->getInfoStream()
-    << "KLEE: done: total queries = " << queries << "\n"
-    << "KLEE: done: valid queries = " << queriesValid << "\n"
-    << "KLEE: done: invalid queries = " << queriesInvalid << "\n"
-    << "KLEE: done: query cex = " << queryCounterexamples << "\n";
-
   std::stringstream stats;
-  stats << '\n'
-        << "KLEE: done: total instructions = " << instructions << '\n'
+  stats << "KLEE: done: [*]" << mainFunctionName
+        << "\n"
         << "KLEE: done: completed paths = " << handler->getNumPathsCompleted()
         << '\n'
         << "KLEE: done: partially completed paths = "
         << handler->getNumPathsExplored() - handler->getNumPathsCompleted()
         << '\n'
         << "KLEE: done: generated tests = " << handler->getNumTestCases()
-        << '\n';
+        << "\n###############################################\n";
 
   bool useColors = llvm::errs().is_displayed();
   if (useColors)
@@ -1635,6 +2607,61 @@ int main(int argc, char **argv, char **envp) {
   handler->getInfoStream() << stats.str();
 
   delete handler;
+}
 
-  return 0;
+static void singlerun(std::vector<bool> &replayPath,
+                      Interpreter::InterpreterOptions &IOpts,
+                      LLVMContext &ctx,
+                      Interpreter::ModuleOptions &Opts,
+                      KModule *kmodule,
+                      std::string mainFunctionName,
+                      TaintSet &ts,
+                      std::vector<PerryRecord> &records,
+                      PerryExprManager &PEM)
+{
+
+  // FIXME: Change me to std types.
+  // No envs, no args, we treat everything symbolic
+
+  if (Watchdog) {
+    klee_error("Not supported yet");
+    if (MaxTime.empty()) {
+      klee_error("--watchdog used without --max-time");
+    }
+
+    int crpwfd[2];
+    int cwprfd[2];
+    if (pipe(crpwfd)) {
+      klee_error("Falied to create pipe");
+    }
+    if (pipe(cwprfd)) {
+      klee_error("Falied to create pipe");
+    }
+
+    int pid = fork();
+    if (pid < 0) {
+      klee_error("unable to fork");
+    } else if (pid) {
+      // parent run as deamon
+      close(crpwfd[0]);
+      close(cwprfd[1]);
+      runDaemon(pid, crpwfd[1], cwprfd[0], ts);
+    } else {
+      prctl(PR_SET_PDEATHSIG, SIGKILL);
+      close(crpwfd[1]);
+      close(cwprfd[0]);
+      int trigger;
+      if (read(crpwfd[0], &trigger, sizeof(trigger)) != sizeof(trigger)) {
+        klee_error("Failed to read from pipe");
+      }
+      close(crpwfd[0]);
+      runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts,
+              cwprfd[1], records, PEM);
+      exit(0);
+    }
+  } else {
+    // no need to fork
+    runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts, 0,
+            records, PEM);
+  }
 }

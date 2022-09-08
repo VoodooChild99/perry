@@ -1,0 +1,107 @@
+svd: STM32F103xx.svd
+
+prefix: STM32F1
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 4096
+
+additional-peripheral:
+  -
+    base: 0xE000ED00
+    size: 0x90
+
+bitcode:
+  - bitcode/system_stm32f1xx.bc
+  - bitcode/stm32f1xx_hal.bc
+  - bitcode/stm32f1xx_hal_cortex.bc
+  - bitcode/stm32f1xx_hal_gpio.bc
+
+peripheral_workload:
+  -
+    target: PWR
+    use-perry: true
+    target-bitcode: bitcode/stm32f1xx_hal_pwr.bc
+    target-struct: PWR_TypeDef
+    constraint_file: perry-stm32f1-pwr.json
+  -
+    target: FLASH
+  -
+    target: RCC
+    use-perry: true
+    target-bitcode: bitcode/stm32f1xx_hal_rcc.bc
+    target-struct: RCC_TypeDef
+    constraint_file: perry-stm32f1-rcc.json
+  -
+    target: TIM2
+  -
+    target: AFIO
+  -
+    target: EXTI
+  -
+    target: USART1
+    kind: USART
+    use-perry: true
+    target-bitcode: bitcode/stm32f1xx_hal_uart.bc
+    additional-bitcode:
+      - bitcode/stm32f1xx_hal_rcc.bc
+    target-struct: USART_TypeDef
+    constraint_file: perry-stm32f1-usart.json
+  -
+    target: GPIOA
+  -
+    target: SPI1
+    kind: SPI
+    use-perry: true
+    target-bitcode: bitcode/stm32f1xx_hal_spi.bc
+    target-struct: SPI_TypeDef
+    constraint_file: perry-stm32f1-spi.json
+
+board_config:
+  cpu: cortex-m3
+  machine_name: stm32f103
+  clk_freq: 72000000
+  num_irq: 256
+  init_vtor: 0x08000000
+  bitband: true
+
+  memory:
+    -
+      name: main-flash
+      base: 0x08000000
+      size: 0x00080000
+      type: flash
+    -
+      name: option-bytes
+      base: 0x1ffff000
+      size: 0x00000810
+      type: rom
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00014000
+      type: ram
+
+  peripheral:
+    -
+      kind: TIM2
+      instance: [TIM3]
+    -
+      kind: USART
+      instance: [USART1]
+    -
+      kind: PWR
+    -
+      kind: RCC
+    -
+      kind: FLASH
+    -
+      kind: AFIO
+    -
+      kind: EXTI
+    -
+      kind: GPIOA
+      instance: [GPIOA, GPIOB, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG]
+    -
+      kind: SPI
+      instance: [SPI1, SPI2, SPI3]

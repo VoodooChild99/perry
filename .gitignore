@@ -31,7 +31,14 @@ autoconf/aclocal.m4
 autoconf/autom4te.cache/
 autom4te.cache/
 
-play-with-klee
 .gdb_history
 .vscode
 .cache
+
+klee-run.sh
+
+synthesizer/venv
+synthesizer/__pycache__
+synthesizer/test
+
+profile

@@ -149,7 +149,8 @@ namespace klee {
     bool link(std::vector<std::unique_ptr<llvm::Module>> &modules,
               const std::string &entryPoint);
 
-    void instrument(const Interpreter::ModuleOptions &opts);
+    void instrument(const Interpreter::ModuleOptions &opts,
+                    std::map<std::string, std::string> *SymName = nullptr);
 
     /// Return an id for the given constant, creating a new one if necessary.
     unsigned getConstantID(llvm::Constant *c, KInstruction* ki);
@@ -157,6 +158,21 @@ namespace klee {
     /// Run passes that check if module is valid LLVM IR and if invariants
     /// expected by KLEE's Executor hold.
     void checkModule();
+
+    void prepareCDG(const std::set<std::string> &_TopLevelFunctions,
+                    ControlDependenceGraphPass::NodeSet &_nodeSet,
+                    ControlDependenceGraphPass::NodeMap &_nodeMap);
+    
+    /// Same as manifest(), but without output
+    void manifestNoOutput();
+
+    /// Output manifest
+    void outputManifest(InterpreterHandler *ih, bool forceSourceOutput);
+    
+    /// Setup all required properties in this KModule
+    void setupAll(std::vector<std::unique_ptr<llvm::Module>> &modules,
+                  const Interpreter::ModuleOptions &opts,
+                  std::map<std::string, std::string> &SymName);
   };
 } // End klee namespace
 

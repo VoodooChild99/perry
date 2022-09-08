@@ -32,6 +32,9 @@ namespace klee {
     /// initialize - Construct the global Context instance.
     static void initialize(bool IsLittleEndian, Expr::Width PointerWidth);
 
+    /// Initialized?
+    static bool isInitialized();
+
     /// get - Return the global singleton instance of the Context.
     static const Context &get();
 

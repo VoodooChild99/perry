@@ -1,0 +1,116 @@
+svd: STM32F072x.svd
+
+prefix: STM32F0
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 4096
+
+bitcode:
+  - bitcode/system_stm32f0xx.bc
+  - bitcode/stm32f0xx_hal.bc
+  - bitcode/stm32f0xx_hal_cortex.bc
+  - bitcode/stm32f0xx_hal_gpio.bc
+
+additional-peripheral:
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000ed00
+    size: 0x28
+
+peripheral_workload:
+  -
+    target: PWR
+    use-perry: true
+    target-bitcode: bitcode/stm32f0xx_hal_pwr_ex.bc
+    target-struct: PWR_TypeDef
+    constraint_file: perry-stm32f0-pwr.json
+  -
+    target: Flash
+  -
+    target: RCC
+    use-perry: true
+    target-bitcode: bitcode/stm32f0xx_hal_rcc.bc
+    target-struct: RCC_TypeDef
+    constraint_file: perry-stm32f0-rcc.json
+  -
+    target: SYSCFG
+  -
+    target: TIM2
+  -
+    target: USART1
+    kind: USART
+    use-perry: true
+    target-bitcode: bitcode/stm32f0xx_hal_uart.bc
+    additional-bitcode:
+      - bitcode/stm32f0xx_hal_rcc.bc
+      - bitcode/stm32f0xx_hal_uart_ex.bc
+    target-struct: USART_TypeDef
+    constraint_file: perry-stm32f0-usart.json
+  -
+    target: GPIOA
+  -
+    target: GPIOF
+  -
+    target: SPI1
+    kind: SPI
+    use-perry: true
+    target-bitcode: bitcode/stm32f0xx_hal_spi.bc
+    target-struct: SPI_TypeDef
+    constraint_file: perry-stm32f0-spi.json
+
+board_config:
+  cpu: cortex-m0
+  machine_name: stm32f072_nucleo
+  clk_freq: 48000000
+  num_irq: 47
+  init_vtor: 0x08000000
+  bitband: false
+
+  memory:
+    -
+      name: wtf
+      base: 0x00000000
+      size: 0x2000
+      type: ram
+    -
+      name: main-flash
+      base: 0x08000000
+      size: 0x00080000
+      type: flash
+    -
+      name: option-bytes
+      base: 0x1fffc800
+      size: 0x00003800
+      type: rom
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00040000
+      type: ram
+
+  peripheral:
+    -
+      kind: TIM2
+      instance: [TIM3]
+    -
+      kind: USART
+      instance: [USART2]
+    -
+      kind: PWR
+    -
+      kind: RCC
+    -
+      kind: SYSCFG
+    -
+      kind: Flash
+    -
+      kind: GPIOA
+    -
+      kind: GPIOF
+      instance: [GPIOB, GPIOC, GPIOD, GPIOE, GPIOF]
+    -
+      kind: SPI
+      instance: [SPI1, SPI2]

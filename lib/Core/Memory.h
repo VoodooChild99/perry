@@ -193,10 +193,17 @@ private:
   // concrete taints
   TaintSet *taints = nullptr;
 
+  // persistent taint
+  bool hasPersistentTaint = false;
+  TaintTy *persistTaint = nullptr;
+  TaintTy *TaintReadCtx = nullptr;
+
 public:
   unsigned size;
 
   bool readOnly;
+
+  static const TaintTy NO_PERSIST_TAINT = 0xffffffff;
 
 public:
   /// Create a new object state for the given memory object with concrete
@@ -236,6 +243,9 @@ public:
 
   void writeTaint(unsigned offset, TaintSet& ts);
   TaintSet* readTaint(unsigned offset) const;
+  void setPersistTaint(unsigned offset, TaintTy pt);
+  TaintTy getPersistTaint(unsigned offset) const;
+  TaintTy getTaintReadCtx(unsigned offset) const;
 
   /*
     Looks at all the symbolic bytes of this object, gets a value for them
@@ -243,6 +253,8 @@ public:
   */
   void flushToConcreteStore(TimingSolver *solver,
                             const ExecutionState &state) const;
+  
+  const UpdateList &getUpdatesPublic() const;
 
 private:
   const UpdateList &getUpdates() const;

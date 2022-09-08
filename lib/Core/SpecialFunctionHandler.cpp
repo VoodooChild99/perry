@@ -147,9 +147,12 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("__ubsan_handle_divrem_overflow", handleDivRemOverflow, false),
 
   add("klee_set_taint", handleSetTaint, false),
+  add("klee_set_persist_taint", handleSetPersistTaint, false),
   add("klee_has_taint", handleHasTaint, true),
   add("klee_get_taint", handleGetTaint, true),
   add("klee_get_taint_number", handleGetTaintNum, true),
+  add("klee_get_taint_internal", handleGetTaintInternal, false),
+  add("klee_get_return_value", handleGetReturnValue, false),
 
 #undef addDNR
 #undef add
@@ -190,6 +193,31 @@ void SpecialFunctionHandler::prepare(
   for (unsigned i=0; i<N; ++i) {
     HandlerInfo &hi = handlerInfo[i];
     Function *f = executor.kmodule->module->getFunction(hi.name);
+
+    // No need to create if the function doesn't exist, since it cannot
+    // be called in that case.
+    if (f && (!hi.doNotOverride || f->isDeclaration())) {
+      preservedFunctions.push_back(hi.name);
+      // Make sure NoReturn attribute is set, for optimization and
+      // coverage counting.
+      if (hi.doesNotReturn)
+        f->addFnAttr(Attribute::NoReturn);
+
+      // Change to a declaration since we handle internally (simplifies
+      // module and allows deleting dead code).
+      if (!f->isDeclaration())
+        f->deleteBody();
+    }
+  }
+}
+
+void SpecialFunctionHandler::
+staticPrepare(KModule &KM, std::vector<const char *> &preservedFunctions)
+{
+  unsigned N = size();
+  for (unsigned i=0; i<N; ++i) {
+    HandlerInfo &hi = handlerInfo[i];
+    Function *f = KM.module->getFunction(hi.name);
 
     // No need to create if the function doesn't exist, since it cannot
     // be called in that case.
@@ -967,6 +995,59 @@ void SpecialFunctionHandler::handleSetTaint(ExecutionState &state,
   }
 }
 
+// void klee_set_persist_taint(i32 persist_taint, i8 *addr, i32 size)
+void SpecialFunctionHandler::
+handleSetPersistTaint(ExecutionState &state, KInstruction *target,
+                      std::vector<ref<Expr>> &arguments)
+{
+  if (arguments.size() != 3) {
+    executor.terminateStateOnUserError(state,
+        "Incorrect number of arguments to klee_set_persist_taint(size_t, void*, size_t)");
+    return;
+  }
+
+  ref<Expr> taint = arguments[0];
+  ref<Expr> address = arguments[1];
+  ref<Expr> size = arguments[2];
+
+  klee::ConstantExpr *CE = dyn_cast<ConstantExpr>(taint);
+  if (!CE) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint is not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_size = dyn_cast<ConstantExpr>(size);
+  if (!CE_size) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint size not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_addr = dyn_cast<ConstantExpr>(address);
+  if (!CE_addr) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint address not supported");
+    return;
+  }
+
+  ObjectPair op;
+  if (state.addressSpace.resolveOne(CE_addr, op)) {
+    const MemoryObject *mo = op.first;
+    ObjectState *os = const_cast<ObjectState*>(op.second);
+    // ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+
+    unsigned int taint_size = CE_size->getZExtValue();
+    TaintTy theTaint = CE->getZExtValue();
+    uint64_t offset = CE_addr->getZExtValue() - mo->address;
+    for (unsigned i = 0; i < taint_size; ++i) {
+      os->setPersistTaint(i + offset, theTaint);
+    }
+  } else {
+    executor.terminateStateOnUserError(state,
+        "Cannot resolve the address to be tainted");
+    return;
+  }
+}
+
 // i8 klee_has_taint(i8 *addr, i32 size, i32 taint)
 void SpecialFunctionHandler::handleHasTaint(ExecutionState &state,
                                             KInstruction *target,
@@ -1139,4 +1220,83 @@ void SpecialFunctionHandler::handleGetTaint(ExecutionState &state,
         "Cannot resolve the address to get taint from");
     return;
   }
+}
+
+// void klee_get_taint_internal(void* addr, size_t size)
+void SpecialFunctionHandler::
+handleGetTaintInternal(ExecutionState &state, KInstruction *target,
+                       std::vector<ref<Expr>> &arguments)
+{
+  if (arguments.size() != 2) {
+    executor.terminateStateOnUserError(state,
+        "Incorrect number of arguments to klee_get_taint_internal(void*, size_t)");
+    return;
+  }
+
+  ref<Expr> address = arguments[0];
+  ref<Expr> size = arguments[1];
+
+  klee::ConstantExpr *CE_size = dyn_cast<ConstantExpr>(size);
+  if (!CE_size) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint size not supported");
+    return;
+  }
+  klee::ConstantExpr *CE_addr = dyn_cast<ConstantExpr>(address);
+  if (!CE_addr) {
+    executor.terminateStateOnUserError(state,
+        "Un-constant taint address not supported");
+    return;
+  }
+
+  ObjectPair op;
+  if (state.addressSpace.resolveOne(CE_addr, op)) {
+    const MemoryObject *mo = op.first;
+    const ObjectState *os = op.second;
+    // ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+
+    unsigned int taint_size = CE_size->getZExtValue();
+    TaintSet ts;
+    uint64_t offset = CE_addr->getZExtValue() - mo->address;
+    for (unsigned i = 0; i < taint_size; ++i) {
+      TaintSet *rt = os->readTaint(i + offset);
+      if (rt) {
+        for (auto tt : *rt) {
+          if (tt & 0x00ff0000) {
+            continue;
+          }
+          addTaint(ts, tt);
+        }
+      }
+    }
+
+    mergeTaint(state.taintedOutcomes, ts);
+  } else {
+    executor.terminateStateOnUserError(state,
+        "Cannot resolve the address to get taint from");
+    return;
+  }
+}
+
+// void klee_get_return_value(size_t)
+void SpecialFunctionHandler::
+handleGetReturnValue(ExecutionState &state, KInstruction *target,
+                     std::vector<ref<Expr>> &arguments)
+{
+  if (arguments.size() != 1) {
+    executor.terminateStateOnUserError(state,
+      "Incorrect number of arguments to klee_get_return_value(size_t)");
+    return;
+  }
+
+  ref<Expr> val = arguments[0];
+  klee::ConstantExpr  *CE_val = dyn_cast<ConstantExpr>(val);
+  if (!CE_val) {
+    executor.terminateStateOnUserError(state, 
+      "Un-constant value not supported");
+    return;
+  }
+  
+  state.retVal = CE_val->getZExtValue();
+  return;
 }

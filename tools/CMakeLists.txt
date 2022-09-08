@@ -9,7 +9,7 @@
 add_subdirectory(ktest-gen)
 add_subdirectory(ktest-randgen)
 add_subdirectory(kleaver)
-add_subdirectory(klee)
+# add_subdirectory(klee)
 add_subdirectory(klee-replay)
 add_subdirectory(klee-stats)
 add_subdirectory(klee-zesti)

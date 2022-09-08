@@ -1,0 +1,6 @@
+-e git+https://github.com/posborne/cmsis-svd.git@551849db7be8415b1acc19bcc7fbbb07e808a4bf#egg=cmsis_svd&subdirectory=python
+prettytable==3.3.0
+PyYAML==6.0
+six==1.16.0
+wcwidth==0.2.5
+z3-solver==4.9.1.0

@@ -27,6 +27,8 @@ klee_add_component(kleeCore
   TimingSolver.cpp
   UserSearcher.cpp
   Taint.cpp
+  PerryKModule.cpp
+  PerryTrace.cpp
 )
 
 # TODO: Work out what the correct LLVM components are for
@@ -35,7 +37,7 @@ set(LLVM_COMPONENTS
   core
   executionengine
   mcjit
-  native
+  all-targets
   support
 )
 
