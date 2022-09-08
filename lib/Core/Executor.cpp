@@ -485,6 +485,14 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
         klee_message("HaltTimer invoked");
         setHaltExecution(true);
       }));
+  
+  const time::Span echoTime{"10s"};
+  timers.add(
+    std::make_unique<Timer>(echoTime, [&]{
+      klee_message("[#] completed: %8u, explored: %8u",
+                   interpreterHandler->getPathsCompleted(),
+                   interpreterHandler->getPathsExplored());
+    }));
 
   coreSolverTimeout = time::Span{MaxCoreSolverTime};
   if (coreSolverTimeout) UseForkedCoreSolver = true;

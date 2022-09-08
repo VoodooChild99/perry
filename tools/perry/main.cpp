@@ -347,8 +347,10 @@ public:
   unsigned getNumPathsCompleted() { return m_pathsCompleted; }
   unsigned getNumPathsExplored() { return m_pathsExplored; }
   void incPathsCompleted() { ++m_pathsCompleted; }
+  unsigned getPathsCompleted() { return m_pathsCompleted; }
   void incPathsExplored(std::uint32_t num = 1) {
     m_pathsExplored += num; }
+  unsigned getPathsExplored() { return m_pathsExplored; }
 
   void setInterpreter(Interpreter *i);
 
