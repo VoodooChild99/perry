@@ -4451,10 +4451,14 @@ static void logRegOp(PerryExprManager &perryExprManager,
     rts |= wos->getTaintReadCtx(offset_concrete);
 
     ref<PerryExpr> ER = perryExprManager.acquirePerryExpr(ExprInReg);
+    std::vector<ref<PerryExpr>> cur_constraints;
+    for (auto &CE : state.constraints) {
+      cur_constraints.push_back(perryExprManager.acquirePerryExpr(CE));
+    }
     if (isWrite) {
       state.pTrace.emplace_back(
         PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   state.constraints.size()));
+                                   cur_constraints));
       state.regAccesses.emplace_back(
         RegisterAccess::alloc(rts, RegisterAccess::REG_WRITE,
                               wos->getUpdatesPublic().root->getName(),
@@ -4474,7 +4478,7 @@ static void logRegOp(PerryExprManager &perryExprManager,
     } else {
       state.pTrace.emplace_back(
         PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   state.constraints.size()));
+                                   cur_constraints));
       state.regAccesses.emplace_back(
         RegisterAccess::alloc(rts, RegisterAccess::REG_READ,
                               wos->getUpdatesPublic().root->getName(),

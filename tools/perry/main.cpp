@@ -1614,9 +1614,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
 
         std::vector<ref<PerryExpr>> RegConstraint;
-        unsigned cs_cur_num = PTI.constraint_idx;
-        for (unsigned i = 0; i < cs_cur_num; ++i) {
-          auto &CS = final_constraints[i];
+        auto &cs_cur = PTI.cur_constraints;
+        for (auto &CS : cs_cur) {
           if (containsReadTo(SymName, CS)) {
             RegConstraint.push_back(CS);
           }
@@ -1696,7 +1695,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           unsigned trace_size = trace.size();
           for (unsigned i = 0; i < trace_size; ++i) {
             auto &PTI = trace[i];
-            unsigned num_cs = PTI.constraint_idx;
+            unsigned num_cs = PTI.cur_constraints.size();
             auto &cur_access = reg_accesses[PTI.reg_access_idx];
 
             if (cur_access->AccessType == RegisterAccess::REG_READ) {
@@ -1722,8 +1721,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   collectContainedSym(last_result, before_syms);
                   // look-before to find related constraints
                   for (unsigned j = last_idx; j < num_cs; ++j) {
-                    if (containsReadRelated(before_syms, "", final_constraints[j])) {
-                      before_constraints.push_back(final_constraints[j]);
+                    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+                      before_constraints.push_back(PTI.cur_constraints[j]);
                     }
                   }
                   if (!before_constraints.empty()) {
@@ -1731,17 +1730,14 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     // look-after to find the constraint this read must meet to 
                     // successfully return
                     unsigned num_constraint_on_read;
-                    if (i == trace_size - 1) {
-                      num_constraint_on_read = final_constraints.size();
-                    } else {
-                      num_constraint_on_read = trace[i + 1].constraint_idx;
-                    }
+                    const PerryTrace::Constraints &cs_to_use = (i == trace_size - 1) ? final_constraints : trace[i + 1].cur_constraints;
+                    num_constraint_on_read = cs_to_use.size();
                     auto this_result = cur_access->ExprInReg;
                     std::set<SymRead> after_syms;
                     collectContainedSym(this_result, after_syms);
                     for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
-                      if (containsReadRelated(after_syms, "", final_constraints[j])) {
-                        after_constraints.push_back(final_constraints[j]);
+                      if (containsReadRelated(after_syms, "", cs_to_use[j])) {
+                        after_constraints.push_back(cs_to_use[j]);
                         // this is somewhat tricky.
                         // we only want the first related constraint, I think this
                         // is resonable.
@@ -1772,18 +1768,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   auto &last_PTI = trace[i - 1];
                   auto &last_access = reg_accesses[last_PTI.reg_access_idx];
                   unsigned num_constraint_on_read;
-                  if (i == trace_size - 1) {
-                    num_constraint_on_read = final_constraints.size();
-                  } else {
-                    num_constraint_on_read = trace[i + 1].constraint_idx;
-                  }
+                  const PerryTrace::Constraints &cs_to_use = (i == trace_size - 1) ? final_constraints : trace[i + 1].cur_constraints;
+                  num_constraint_on_read = cs_to_use.size();
                   auto this_result = cur_access->ExprInReg;
                   std::set<SymRead> after_syms;
                   collectContainedSym(this_result, after_syms);
                   std::vector<ref<PerryExpr>> after_constraints;
                   for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
-                    if (containsReadRelated(after_syms, "", final_constraints[j])) {
-                      after_constraints.push_back(final_constraints[j]);
+                    if (containsReadRelated(after_syms, "", cs_to_use[j])) {
+                      after_constraints.push_back(cs_to_use[j]);
                       break;
                     }
                   }
@@ -1794,8 +1787,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     collectContainedSym(last_result, before_syms);
                     std::vector<ref<PerryExpr>> before_constraints;
                     for (unsigned j = 0; j < num_cs; ++j) {
-                      if (containsReadRelated(before_syms, "", final_constraints[j])) {
-                        before_constraints.push_back(final_constraints[j]);
+                      if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+                        before_constraints.push_back(PTI.cur_constraints[j]);
                       }
                     }
                     DependentItem key(
