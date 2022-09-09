@@ -1699,7 +1699,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             auto &cur_access = reg_accesses[PTI.reg_access_idx];
 
             if (cur_access->AccessType == RegisterAccess::REG_READ) {
-              if (last_is_read && last_idx != num_cs) {
+              if (last_is_read) {
                 // two adjacent reads, and new constraints are introduced.
                 // check whether the newly-introduced constraints contains
                 // the result of the previous read.
@@ -1720,7 +1720,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   std::set<SymRead> before_syms;
                   collectContainedSym(last_result, before_syms);
                   // look-before to find related constraints
-                  for (unsigned j = last_idx; j < num_cs; ++j) {
+                  for (unsigned j = 0; j < num_cs; ++j) {
                     if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
                       before_constraints.push_back(PTI.cur_constraints[j]);
                     }
@@ -1735,13 +1735,13 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     auto this_result = cur_access->ExprInReg;
                     std::set<SymRead> after_syms;
                     collectContainedSym(this_result, after_syms);
-                    for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
+                    for (unsigned j = 0; j < num_constraint_on_read; ++j) {
                       if (containsReadRelated(after_syms, "", cs_to_use[j])) {
                         after_constraints.push_back(cs_to_use[j]);
                         // this is somewhat tricky.
                         // we only want the first related constraint, I think this
                         // is resonable.
-                        break;
+                        // break;
                       }
                     }
                     if (!after_constraints.empty()) {
@@ -1759,7 +1759,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                 last_access->offset,
                                 last_access->width),
                         last_result, before_constraints);
-                      rrDepMap[key].insert(val);
+                      rrDepMap.at(key).insert(val);
                     }
                   }
                 }
@@ -1774,10 +1774,10 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   std::set<SymRead> after_syms;
                   collectContainedSym(this_result, after_syms);
                   std::vector<ref<PerryExpr>> after_constraints;
-                  for (unsigned j = num_cs; j < num_constraint_on_read; ++j) {
+                  for (unsigned j = 0; j < num_constraint_on_read; ++j) {
                     if (containsReadRelated(after_syms, "", cs_to_use[j])) {
                       after_constraints.push_back(cs_to_use[j]);
-                      break;
+                      // break;
                     }
                   }
                   if (!after_constraints.empty()) {
@@ -1822,7 +1822,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     if (before_expr) {
                       val.before_sr = cur_reg;
                     }
-                    wrDepMap[key].insert(val);
+                    wrDepMap.at(key).insert(val);
                   }
                 }
               }

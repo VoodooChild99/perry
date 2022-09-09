@@ -4533,6 +4533,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         // bytes must be 1
         bytes = 1;
         type = Expr::Int8;
+        break;
       }
     }
   }
