@@ -73,7 +73,7 @@ RaiseArmAsmPass::HandlerMapTy RaiseArmAsmPass::InitHandlerMap() {
 
 RaiseArmAsmPass::IgnoreSetTy RaiseArmAsmPass::InitIgnoreSet() {
   IgnoreSetTy ret = {
-    "MRS", "MSR", "NOP", "nop", "wfi", "wfe", "dsb", "isb", "dmb"
+    "MRS", "MSR", "NOP", "nop", "wfi", "wfe", "dsb", "isb", "dmb", "sev"
   };
   return ret;
 }
