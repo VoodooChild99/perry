@@ -42,3 +42,4 @@ synthesizer/__pycache__
 synthesizer/test
 
 profile
+klee-out-*
