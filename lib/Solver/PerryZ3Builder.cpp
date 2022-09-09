@@ -903,9 +903,14 @@ getLogicalBitExpr(const z3::expr &src, const std::string &SymName,
   auto ret = reconstructExpr(
     logic_expr, orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
   // std::cerr << ret << "\n666666666666666666666666\n";
-  assert(ret.size() == 1);
-  auto result = ret[0].simplify();
-  return result;
+  assert(ret.size() <= 1);
+  if (ret.size() == 1) {
+    auto result = ret[0].simplify();
+    return result;
+  } else {
+    auto result = ctx.bool_val(true);
+    return result;
+  }
 }
 
 z3::expr PerryZ3Builder::
