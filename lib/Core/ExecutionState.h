@@ -249,6 +249,7 @@ public:
 
   PerryTrace pTrace;
   std::vector<ref<RegisterAccess>> regAccesses;
+  PerryTrace::Constraints conditions;
   uint64_t retVal;
 
 public:

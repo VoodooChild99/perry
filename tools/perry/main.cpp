@@ -1586,6 +1586,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       auto &final_constraints = rec.final_constraints;
       auto returned_value = rec.return_value;
       auto &reg_accesses = rec.register_accesses;
+      auto &conditions = rec.conditions;
       auto success_return = rec.success;
       state_idx += 1;
       std::vector<ref<PerryExpr>> lastWriteConstraint;
@@ -1718,28 +1719,24 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   std::set<SymRead> before_syms;
                   collectContainedSym(last_result, before_syms);
                   // look-before to find related constraints
-                  for (unsigned j = 0; j < num_cs; ++j) {
-                    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
-                      before_constraints.push_back(PTI.cur_constraints[j]);
+                  for (unsigned j = last_PTI.condition_idx; j < PTI.condition_idx; ++j) {
+                    if (containsReadRelated(before_syms, "", conditions[j])) {
+                      before_constraints.push_back(conditions[j]);
                     }
                   }
                   if (!before_constraints.empty()) {
                     // now we have a potential dependent pair
                     // look-after to find the constraint this read must meet to 
                     // successfully return
-                    unsigned num_constraint_on_read;
-                    const PerryTrace::Constraints &cs_to_use = (i == trace_size - 1) ? final_constraints : trace[i + 1].cur_constraints;
-                    num_constraint_on_read = cs_to_use.size();
+                    unsigned num_constraint_on_read
+                      = (i == trace_size - 1) ? conditions.size()
+                                              : trace[i + 1].condition_idx;
                     auto this_result = cur_access->ExprInReg;
                     std::set<SymRead> after_syms;
                     collectContainedSym(this_result, after_syms);
-                    for (unsigned j = 0; j < num_constraint_on_read; ++j) {
-                      if (containsReadRelated(after_syms, "", cs_to_use[j])) {
-                        after_constraints.push_back(cs_to_use[j]);
-                        // this is somewhat tricky.
-                        // we only want the first related constraint, I think this
-                        // is resonable.
-                        // break;
+                    for (unsigned j = PTI.condition_idx; j < num_constraint_on_read; ++j) {
+                      if (containsReadRelated(after_syms, "", conditions[j])) {
+                        after_constraints.push_back(conditions[j]);
                       }
                     }
                     if (!after_constraints.empty()) {
@@ -1781,17 +1778,16 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                 if (inLoopCondition(cur_access->place) > 0) {
                   auto &last_PTI = trace[i - 1];
                   auto &last_access = reg_accesses[last_PTI.reg_access_idx];
-                  unsigned num_constraint_on_read;
-                  const PerryTrace::Constraints &cs_to_use = (i == trace_size - 1) ? final_constraints : trace[i + 1].cur_constraints;
-                  num_constraint_on_read = cs_to_use.size();
+                  unsigned num_constraint_on_read
+                      = (i == trace_size - 1) ? conditions.size()
+                                              : trace[i + 1].condition_idx;
                   auto this_result = cur_access->ExprInReg;
                   std::set<SymRead> after_syms;
                   collectContainedSym(this_result, after_syms);
                   std::vector<ref<PerryExpr>> after_constraints;
-                  for (unsigned j = 0; j < num_constraint_on_read; ++j) {
-                    if (containsReadRelated(after_syms, "", cs_to_use[j])) {
-                      after_constraints.push_back(cs_to_use[j]);
-                      // break;
+                  for (unsigned j = PTI.condition_idx; j < num_constraint_on_read; ++j) {
+                    if (containsReadRelated(after_syms, "", conditions[j])) {
+                      after_constraints.push_back(conditions[j]);
                     }
                   }
                   if (!after_constraints.empty()) {
@@ -1860,29 +1856,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   for (auto &key : rrDepMap) {
     // errs() << "rr##############################\n";
     // errs() << key.first << "----------------------------\n";
-    z3::expr_vector val_constraints(z3builder.getContext());
-    for (auto &val : key.second) {
-      std::set<SymRead> fuckSyms;
-      collectContainedSym(val.after, fuckSyms);
-      auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                false, fuckSyms);
-      z3::expr_vector bit_level_expr_before(z3builder.getContext());
-      z3::expr_vector bit_level_expr_after(z3builder.getContext());
-      if (val.before) {
-        z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
-      }
-      z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
-      auto blacklist
-        = z3builder.inferBitLevelConstraintRaw(wis, val.before_sym,
-                                               bit_level_expr_before);
-      auto bit_constraints_after
-        = z3builder.inferBitLevelConstraintWithBlacklist(wis,
-                                                         val.sym,
-                                                         blacklist,
-                                                         bit_level_expr_after);
-      val_constraints.push_back(bit_constraints_after);
-    }
-    z3::expr final_val_constraint = z3::mk_and(val_constraints).simplify();
     std::set<SymRead> keySyms;
     collectContainedSym(key.first.expr, keySyms);
     auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
@@ -1893,16 +1866,34 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
                                           bit_level_expr_key);
     bit_constraints_key = bit_constraints_key.simplify();
-    if (rr_expr_id_to_idx.find(final_val_constraint.id())
-        == rr_expr_id_to_idx.end())
-    {
-      rr_expr_id_to_idx.insert(std::make_pair(final_val_constraint.id(),
-                                              rr_conds.size()));
-      rr_conds.push_back(final_val_constraint);
-      rr_actions.push_back(z3::expr_vector(z3builder.getContext()));
+    for (auto &val : key.second) {
+      std::set<SymRead> fuckSyms;
+      collectContainedSym(val.after, fuckSyms);
+      auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
+                                                false, fuckSyms);
+      // z3::expr_vector bit_level_expr_before(z3builder.getContext());
+      z3::expr_vector bit_level_expr_after(z3builder.getContext());
+      // if (val.before) {
+      //   z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
+      // }
+      z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
+      // auto blacklist
+      //   = z3builder.inferBitLevelConstraintRaw(wis, val.before_sym,
+      //                                          bit_level_expr_before);
+      auto bit_constraints_after
+        = z3builder.inferBitLevelConstraint(wis, val.sym, bit_level_expr_after);
+      bit_constraints_after = bit_constraints_after.simplify();
+      if (rr_expr_id_to_idx.find(bit_constraints_after.id())
+          == rr_expr_id_to_idx.end())
+      {
+        rr_expr_id_to_idx.insert(std::make_pair(bit_constraints_after.id(),
+                                                rr_conds.size()));
+        rr_conds.push_back(bit_constraints_after);
+        rr_actions.push_back(z3::expr_vector(z3builder.getContext()));
+      }
+      auto cur_idx = rr_expr_id_to_idx[bit_constraints_after.id()];
+      rr_actions[cur_idx].push_back(bit_constraints_key);
     }
-    auto cur_idx = rr_expr_id_to_idx[final_val_constraint.id()];
-    rr_actions[cur_idx].push_back(bit_constraints_key);
   }
 
   // deal with write-read dependences
@@ -1913,6 +1904,16 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   z3::expr_vector wr_actions_final(z3builder.getContext());
   std::vector<z3::expr_vector> wr_actions;
   for (auto &key : wrDepMap) {
+    std::set<SymRead> keySyms;
+    collectContainedSym(key.first.expr, keySyms);
+    auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
+                                                 false, keySyms);
+    z3::expr_vector bit_level_expr_key(z3builder.getContext());
+    z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
+    auto bit_constraints_key
+      = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
+                                          bit_level_expr_key);
+    bit_constraints_key = bit_constraints_key.simplify();
     // errs() << "wr##############################\n";
     // errs() << key.first << "----------------------------\n";
     z3::expr_vector val_constraints(z3builder.getContext());
@@ -1984,54 +1985,49 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                             PCE->getAPValue().getZExtValue()));
         }
       }
-    }
-    z3::expr final_val_constraint = z3::mk_and(val_constraints).simplify();
-    std::set<SymRead> keySyms;
-    collectContainedSym(key.first.expr, keySyms);
-    auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
-                                                 false, keySyms);
-    z3::expr_vector bit_level_expr_key(z3builder.getContext());
-    z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
-    auto bit_constraints_key
-      = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
-                                          bit_level_expr_key);
-    bit_constraints_key = bit_constraints_key.simplify();
-    if (bit_constraints_key.is_true()) {
-      // post constraints are not enough to resolve the constraint on this register
-      // this can happen when symbols are compared with symbols.
-      // We additionally add constraints on the previously written value and repeat
-      // this process. Hopefully this can help.
-      z3::expr_vector tmp_vec(z3builder.getContext());
-      for (auto &val : key.second) {
+      z3::expr final_val_constraint = val_constraints.back();
+      val_constraints.pop_back();
+      final_val_constraint = final_val_constraint.simplify();
+      bool reset_constraint_key = false;
+      if (bit_constraints_key.is_true()) {
+        // post constraints are not enough to resolve the constraint on this register
+        // this can happen when symbols are compared with symbols.
+        // We additionally add constraints on the previously written value and repeat
+        // this process. Hopefully this can help.
+        z3::expr_vector tmp_vec(z3builder.getContext());
         if (val.constraints.empty()) {
           continue;
         }
-        std::set<SymRead> fuckSyms;
-        collectContainedSym(val.after, fuckSyms);
+        std::set<SymRead> tmpSyms;
+        collectContainedSym(val.after, tmpSyms);
         auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                  false, fuckSyms);
+                                                  false, tmpSyms);
         tmp_vec.push_back(wis);
+        tmp_vec.push_back(key_cs);
+        z3::expr tmp_key_cs = z3::mk_and(tmp_vec);
+        tmp_key_cs = tmp_key_cs.simplify();
+        z3::expr_vector bit_level_expr_again(bit_level_expr_key);
+        // z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
+        bit_constraints_key
+          = z3builder.inferBitLevelConstraint(tmp_key_cs, key.first.sym,
+                                              bit_level_expr_again);
+        bit_constraints_key = bit_constraints_key.simplify();
+        reset_constraint_key = true;
       }
-      tmp_vec.push_back(key_cs);
-      key_cs = z3::mk_and(tmp_vec);
-      key_cs = key_cs.simplify();
-      z3::expr_vector bit_level_expr_again(z3builder.getContext());
-      z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
-      bit_constraints_key
-        = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
-                                            bit_level_expr_again);
-      bit_constraints_key = bit_constraints_key.simplify();
+      if (wr_expr_id_to_idx.find(final_val_constraint.id()) ==
+          wr_expr_id_to_idx.end())
+      {
+        wr_expr_id_to_idx.insert(
+          std::make_pair(final_val_constraint.id(), wr_conds.size()));
+        wr_conds.push_back(final_val_constraint);
+        wr_actions.push_back(z3::expr_vector(z3builder.getContext()));
+      }
+      auto cur_idx = wr_expr_id_to_idx[final_val_constraint.id()];
+      wr_actions[cur_idx].push_back(bit_constraints_key);
+      if (reset_constraint_key) {
+        bit_constraints_key = z3builder.getContext().bool_val(true);
+      }
     }
-    if (wr_expr_id_to_idx.find(final_val_constraint.id()) ==
-        wr_expr_id_to_idx.end())
-    {
-      wr_expr_id_to_idx.insert(
-        std::make_pair(final_val_constraint.id(), wr_conds.size()));
-      wr_conds.push_back(final_val_constraint);
-      wr_actions.push_back(z3::expr_vector(z3builder.getContext()));
-    }
-    auto cur_idx = wr_expr_id_to_idx[final_val_constraint.id()];
-    wr_actions[cur_idx].push_back(bit_constraints_key);
   }
   
   z3::solver s(z3builder.getContext());

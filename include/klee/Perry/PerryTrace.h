@@ -101,12 +101,14 @@ public:
   // the idx will be used on the final constraint on this path
   struct PerryTraceItem {
     unsigned reg_access_idx;
+    unsigned condition_idx;
     // unsigned constraint_idx;
     Constraints cur_constraints;
 
-    PerryTraceItem(unsigned _reg_access_idx,
+    PerryTraceItem(unsigned _reg_access_idx, unsigned _condition_idx,
                    const std::vector<ref<PerryExpr>> &_cur_constraints)
       : reg_access_idx(_reg_access_idx),
+        condition_idx(_condition_idx),
         cur_constraints(std::move(_cur_constraints)) {}
   };
   // using PerryTraceItem = std::pair<RegisterAccessIndex, ConstraintIndex>;
@@ -143,15 +145,18 @@ struct PerryRecord {
   PerryTrace::Constraints final_constraints;
   std::vector<ref<RegisterAccess>> register_accesses;
   PerryTrace trace;
+  PerryTrace::Constraints conditions;
   
   PerryRecord(bool _success, uint64_t _return_value,
               const PerryTrace::Constraints &_final_constraints,
               const std::vector<ref<RegisterAccess>> &_register_accesses,
-              const PerryTrace &_trace)
+              const PerryTrace &_trace,
+              const PerryTrace::Constraints &_conditions)
     : success(_success), return_value(_return_value),
       final_constraints(std::move(_final_constraints)),
       register_accesses(std::move(_register_accesses)),
-      trace(std::move(_trace)) {}
+      trace(std::move(_trace)),
+      conditions(std::move(_conditions)) {}
 };
 
 }

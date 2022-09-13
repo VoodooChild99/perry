@@ -110,6 +110,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     taintedOutcomes(state.taintedOutcomes),
     pTrace(state.pTrace),
     regAccesses(state.regAccesses),
+    conditions(state.conditions),
     retVal(state.retVal) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
