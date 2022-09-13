@@ -1563,8 +1563,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                            unique_constraints_final,
                                            unique_rr_constraint;
   std::set<unsigned> writtenDataRegIdx, readDataRegIdx;
-  PerryRRDependentMap rrDepMap;
-  PerryWRDependentMap wrDepMap;
+  PerryDependentMap rrDepMap, wrDepMap;
 
   bool isIRQ = false;
   PerryZ3Builder z3builder;
@@ -1689,7 +1688,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           // infer reg linkage
           // case 1: two adjacent in-constraint reads
           // case 2: a in-constraint read and previous writes
-          unsigned last_idx = 0;
           bool last_is_read = false;
 
           unsigned trace_size = trace.size();
@@ -1745,20 +1743,36 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                       }
                     }
                     if (!after_constraints.empty()) {
-                      DependentItem key(
+                      DependentItemKey key(
                         SymRead(cur_access->name,
                                 cur_access->offset,
                                 cur_access->width),
                         this_result, after_constraints);
                       if (rrDepMap.find(key) == rrDepMap.end()) {
                         rrDepMap.insert(
-                          std::make_pair(key, std::set<DependentItem>()));
+                          std::make_pair(key, std::set<DependentItemVal>()));
                       }
-                      DependentItem val(
-                        SymRead(last_access->name,
-                                last_access->offset,
-                                last_access->width),
-                        last_result, before_constraints);
+                      ref<PerryExpr> before_expr = 0;
+                      SymRead read_reg(last_access->name,
+                                       last_access->offset,
+                                       last_access->width);
+                      SymRead cur_reg(read_reg);
+                      for (int j = i - 2; j >= 0; --j) {
+                        auto &cur_PTI = trace[j];
+                        auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+                        cur_reg = SymRead(tmp_access->name,
+                                          tmp_access->offset,
+                                          tmp_access->width);
+                        if (cur_reg.relatedWith(read_reg)) {
+                          before_expr = tmp_access->ExprInReg;
+                          break;
+                        }
+                      }
+                      DependentItemVal val(
+                        read_reg, before_expr, last_result, before_constraints);
+                      if (before_expr) {
+                        val.before_sym = cur_reg;
+                      }
                       rrDepMap.at(key).insert(val);
                     }
                   }
@@ -1791,14 +1805,14 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                         before_constraints.push_back(PTI.cur_constraints[j]);
                       }
                     }
-                    DependentItem key(
+                    DependentItemKey key(
                       SymRead(cur_access->name,
                               cur_access->offset,
                               cur_access->width),
                       this_result, after_constraints);
                     if (wrDepMap.find(key) == wrDepMap.end()) {
                       wrDepMap.insert(
-                        std::make_pair(key, std::set<DependentWItem>()));
+                        std::make_pair(key, std::set<DependentItemVal>()));
                     }
                     // locate last write/read to this reg
                     SymRead written_reg = SymRead(last_access->name,
@@ -1817,20 +1831,18 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                         break;
                       }
                     }
-                    DependentWItem val(
+                    DependentItemVal val(
                       written_reg, before_expr, last_result, before_constraints);
                     if (before_expr) {
-                      val.before_sr = cur_reg;
+                      val.before_sym = cur_reg;
                     }
                     wrDepMap.at(key).insert(val);
                   }
                 }
               }
               last_is_read = true;
-              last_idx = num_cs;
             } else {
               last_is_read = false;
-              last_idx = num_cs;
             }
           }
         }
@@ -1851,13 +1863,24 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     z3::expr_vector val_constraints(z3builder.getContext());
     for (auto &val : key.second) {
       std::set<SymRead> fuckSyms;
-      collectContainedSym(val.expr, fuckSyms);
-      auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "", false, fuckSyms);
-      z3::expr_vector bit_level_expr(z3builder.getContext());
-      z3builder.getBitLevelExpr(val.expr, bit_level_expr);
-      auto bit_constraints
-        = z3builder.inferBitLevelConstraint(wis, val.read, bit_level_expr);
-      val_constraints.push_back(bit_constraints);
+      collectContainedSym(val.after, fuckSyms);
+      auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
+                                                false, fuckSyms);
+      z3::expr_vector bit_level_expr_before(z3builder.getContext());
+      z3::expr_vector bit_level_expr_after(z3builder.getContext());
+      if (val.before) {
+        z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
+      }
+      z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
+      auto blacklist
+        = z3builder.inferBitLevelConstraintRaw(wis, val.before_sym,
+                                               bit_level_expr_before);
+      auto bit_constraints_after
+        = z3builder.inferBitLevelConstraintWithBlacklist(wis,
+                                                         val.sym,
+                                                         blacklist,
+                                                         bit_level_expr_after);
+      val_constraints.push_back(bit_constraints_after);
     }
     z3::expr final_val_constraint = z3::mk_and(val_constraints).simplify();
     std::set<SymRead> keySyms;
@@ -1867,11 +1890,14 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     z3::expr_vector bit_level_expr_key(z3builder.getContext());
     z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
     auto bit_constraints_key
-      = z3builder.inferBitLevelConstraint(key_cs, key.first.read,
+      = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
                                           bit_level_expr_key);
     bit_constraints_key = bit_constraints_key.simplify();
-    if (rr_expr_id_to_idx.find(final_val_constraint.id()) == rr_expr_id_to_idx.end()) {
-      rr_expr_id_to_idx.insert(std::make_pair(final_val_constraint.id(), rr_conds.size()));
+    if (rr_expr_id_to_idx.find(final_val_constraint.id())
+        == rr_expr_id_to_idx.end())
+    {
+      rr_expr_id_to_idx.insert(std::make_pair(final_val_constraint.id(),
+                                              rr_conds.size()));
       rr_conds.push_back(final_val_constraint);
       rr_actions.push_back(z3::expr_vector(z3builder.getContext()));
     }
@@ -1905,12 +1931,12 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
         z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
         auto blacklist
-          = z3builder.inferBitLevelConstraintRaw(wis, val.before_sr,
+          = z3builder.inferBitLevelConstraintRaw(wis, val.before_sym,
                                                  bit_level_expr_before);
         
         auto bit_constraints_after
           = z3builder.inferBitLevelConstraintWithBlacklist(wis,
-                                                           val.write,
+                                                           val.sym,
                                                            blacklist,
                                                            bit_level_expr_after);
         val_constraints.push_back(bit_constraints_after);
@@ -1918,7 +1944,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         // no constraint on the written value
         if (!val.after->getKind() == Expr::Constant) {
           // if the expr written into the register is not a constant, check:
-          if (containsReadOnlyTO(val.after, val.write)) {
+          if (containsReadOnlyTO(val.after, val.sym)) {
             // if only the register itself is contained in the expr:
             // errs() << val << "...................................\n";
             z3::expr_vector bit_level_expr_after(z3builder.getContext());
@@ -1930,12 +1956,12 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             auto true_cs = z3builder.getContext().bool_val(true);
             auto blacklist
               = z3builder.inferBitLevelConstraintRaw(true_cs,
-                                                     val.before_sr,
+                                                     val.before_sym,
                                                      bit_level_expr_before);
             
             auto bit_constraints_after
               = z3builder.inferBitLevelConstraintWithBlacklist(true_cs,
-                                                               val.write,
+                                                               val.sym,
                                                                blacklist,
                                                                bit_level_expr_after);
             val_constraints.push_back(bit_constraints_after);
@@ -1947,14 +1973,14 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             klee_warning_once(
               0,
               "[WR Dep] No constraint on the written symbolic expression: %s\n%s",
-              tmp.c_str(), val.write.to_string().c_str());
+              tmp.c_str(), val.sym.to_string().c_str());
             continue;
           }
         } else {
           // the written value is constrained to be this constant
           auto PCE = cast<PerryConstantExpr>(val.after);
           val_constraints.push_back(
-            z3builder.getConstantConstraint(val.write,
+            z3builder.getConstantConstraint(val.sym,
                                             PCE->getAPValue().getZExtValue()));
         }
       }
@@ -1967,7 +1993,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     z3::expr_vector bit_level_expr_key(z3builder.getContext());
     z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
     auto bit_constraints_key
-      = z3builder.inferBitLevelConstraint(key_cs, key.first.read, bit_level_expr_key);
+      = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
+                                          bit_level_expr_key);
     bit_constraints_key = bit_constraints_key.simplify();
     if (bit_constraints_key.is_true()) {
       // post constraints are not enough to resolve the constraint on this register
@@ -1991,7 +2018,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       z3::expr_vector bit_level_expr_again(z3builder.getContext());
       z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
       bit_constraints_key
-        = z3builder.inferBitLevelConstraint(key_cs, key.first.read,
+        = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
                                             bit_level_expr_again);
       bit_constraints_key = bit_constraints_key.simplify();
     }

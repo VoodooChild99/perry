@@ -68,7 +68,9 @@ struct SymRead {
     return os;
   }
 
-  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SymRead &SR) {
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                       const SymRead &SR)
+  {
     os << SR.name << ":" << SR.idx << ":" << SR.width;
     return os;
   }
@@ -81,17 +83,17 @@ struct SymRead {
   }
 };
 
-struct DependentItem {
-  SymRead read;
+struct DependentItemKey {
+  SymRead sym;
   ref<PerryExpr> expr;
   std::vector<ref<PerryExpr>> constraints;
 
-  DependentItem(const SymRead &SR, const ref<PerryExpr> &_expr,
-                const std::vector<ref<PerryExpr>> &_constraints)
-    : read(SR), expr(_expr), constraints(_constraints) {}
+  DependentItemKey(const SymRead &SR, const ref<PerryExpr> &_expr,
+                   const std::vector<ref<PerryExpr>> &_constraints)
+    : sym(SR), expr(_expr), constraints(_constraints) {}
 
-  bool operator<(const DependentItem &DI) const {
-    if (read == DI.read) {
+  bool operator<(const DependentItemKey &DI) const {
+    if (sym == DI.sym) {
       int expr_cmp = expr->compare(*DI.expr);
       if (expr_cmp < 0) {
         return true;
@@ -116,17 +118,18 @@ struct DependentItem {
           return false;
         }
       }
-    } else if (read < DI.read) {
+    } else if (sym < DI.sym) {
       return true;
     } else {
       return false;
     }
   }
 
-  friend std::ostream &operator<<(std::ostream &os, const DependentItem &DI) {
+  friend std::ostream &operator<<(std::ostream &os,
+                                  const DependentItemKey &DI) {
     std::string tmp;
     llvm::raw_string_ostream OS(tmp);
-    OS << "Loc: " << DI.read << "\n";
+    OS << "Loc: " << DI.sym << "\n";
     OS << "Expr: ";
     DI.expr->print(OS);
     OS << "\n";
@@ -140,9 +143,9 @@ struct DependentItem {
   }
 
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                                       const DependentItem &DI)
+                                       const DependentItemKey &DI)
   {
-    os << "Loc: " << DI.read << "\n";
+    os << "Loc: " << DI.sym << "\n";
     os << "Expr: ";
     DI.expr->print(os);
     os << "\n";
@@ -157,24 +160,24 @@ struct DependentItem {
 
 };
 
-using PerryRRDependentMap = std::map<DependentItem, std::set<DependentItem>>;
+// using PerryRRDependentMap = std::map<DependentItem, std::set<DependentItem>>;
 
-struct DependentWItem {
-  SymRead write;
-  SymRead before_sr;
+struct DependentItemVal {
+  SymRead sym;
+  SymRead before_sym;
   ref<PerryExpr> before;
   ref<PerryExpr> after;
   std::vector<ref<PerryExpr>> constraints;
 
-  DependentWItem(const SymRead &SR,
-                 const ref<PerryExpr> &_before,
-                 const ref<PerryExpr> &_after,
-                 const std::vector<ref<PerryExpr>> &_constraints)
-    : write(SR), before_sr(SR),
+  DependentItemVal(const SymRead &SR,
+                   const ref<PerryExpr> &_before,
+                   const ref<PerryExpr> &_after,
+                   const std::vector<ref<PerryExpr>> &_constraints)
+    : sym(SR), before_sym(SR),
       before(_before), after(_after), constraints(_constraints) {}
 
-  bool operator<(const DependentWItem &DI) const {
-    if (write == DI.write) {
+  bool operator<(const DependentItemVal &DI) const {
+    if (sym == DI.sym) {
       if (!before && DI.before) {
         return true;
       } else if (before && !DI.before) {
@@ -190,7 +193,7 @@ struct DependentWItem {
           }
         }
         // same before
-        if (before_sr == DI.before_sr) {
+        if (before_sym == DI.before_sym) {
           expr_cmp = after->compare(*DI.after);
           if (expr_cmp < 0) {
             return true;
@@ -215,23 +218,24 @@ struct DependentWItem {
               return false;
             }
           }
-        } else if (before_sr < DI.before_sr) {
+        } else if (before_sym < DI.before_sym) {
           return true;
         } else {
           return false;
         }
       }
-    } else if (write < DI.write) {
+    } else if (sym < DI.sym) {
       return true;
     } else {
       return false;
     }
   }
 
-  friend std::ostream &operator<<(std::ostream &os, const DependentWItem &DI) {
+  friend std::ostream &operator<<(std::ostream &os,
+                                  const DependentItemVal &DI) {
     std::string tmp;
     llvm::raw_string_ostream OS(tmp);
-    OS << "Loc: " << DI.write << "\n";
+    OS << "Loc: " << DI.sym << "\n";
     OS << "Expr Before: ";
     if (DI.before) {
       DI.before->print(OS);
@@ -250,9 +254,9 @@ struct DependentWItem {
   }
 
   friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                                       const DependentWItem &DI)
+                                       const DependentItemVal &DI)
   {
-    os << "Loc: " << DI.write << "\n";
+    os << "Loc: " << DI.sym << "\n";
     os << "Expr Before: ";
     if (DI.before) {
       DI.before->print(os);
@@ -271,7 +275,8 @@ struct DependentWItem {
   }
 };
 
-using PerryWRDependentMap = std::map<DependentItem, std::set<DependentWItem>>;
+using PerryDependentMap
+  = std::map<DependentItemKey, std::set<DependentItemVal>>;
 
 
 }
