@@ -77,6 +77,37 @@ FuncSymbolizePass::ParamCell::~ParamCell() {
   }
 }
 
+void FuncSymbolizePass::
+symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
+  int gIdx = 0;
+  for (auto &G : M.globals()) {
+    if (G.isConstant()) {
+      continue;
+    }
+    auto valueType = G.getValueType();
+    if (valueType->isIntegerTy()) {
+      // symbolize it
+      std::string symbolName = "g" + std::to_string(gIdx);
+      gIdx += 1;
+      Value *addr = IRB.CreatePointerCast(&G, IRB.getInt8PtrTy());
+      Value* varName 
+        = ConstantDataArray::getString(IRB.getContext(), symbolName);
+      Value *ptrVarName = IRB.CreateAlloca(varName->getType());
+      IRB.CreateStore(varName, ptrVarName);
+      ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
+      auto varSize = IRB.getInt32(DL->getTypeAllocSize(valueType));
+      IRB.CreateCall(MakeSymbolicFC, {addr, varSize, ptrVarName});
+    } else {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      OS << "Unsupported value type when symbolizing globals: ";
+      valueType->print(OS);
+      klee_error("%s", err_msg.c_str());
+    }
+  }
+}
+
+
 void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
   unsigned num = PeriphAddrList.size();
   if (num != PeriphSizeList.size()) {
@@ -762,7 +793,9 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     IRBF.SetInsertPoint(bb);
     Function *TargetF = M.getFunction(TFName);
     // generate
-    // 0. prepare other peripherals used
+    // symbolize all global variables
+    symbolizeGlobals(IRBF, M);
+    // prepare other peripherals used
     createPeriph(IRBF, M);
     // create params for
     std::vector<ParamCell*> results;

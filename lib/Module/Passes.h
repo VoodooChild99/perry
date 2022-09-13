@@ -269,6 +269,7 @@ private:
   llvm::FunctionCallee AllocFixFC;
   std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;
   std::pair<llvm::Value*, int> fRetVal;
+  void symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
                        std::vector<ParamCell*> &results);
