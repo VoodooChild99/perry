@@ -1292,8 +1292,11 @@ handleGetReturnValue(ExecutionState &state, KInstruction *target,
   ref<Expr> val = arguments[0];
   klee::ConstantExpr  *CE_val = dyn_cast<ConstantExpr>(val);
   if (!CE_val) {
-    executor.terminateStateOnUserError(state, 
-      "Un-constant value not supported");
+    std::string err_msg;
+    llvm::raw_string_ostream OS(err_msg);
+    OS << "Un-constant value not supported: ";
+    val->print(OS);
+    executor.terminateStateOnUserError(state, err_msg.c_str());
     return;
   }
   
