@@ -38,6 +38,7 @@ struct KFunction;
 struct KInstruction;
 class MemoryObject;
 class PTreeNode;
+class PerryExprManager;
 struct InstructionInfo;
 
 llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const MemoryMap &mm);
@@ -252,6 +253,8 @@ public:
   PerryTrace::Constraints conditions;
   uint64_t retVal;
 
+  std::map<ref<Expr>, ref<PerryExpr>> fast_conversion_table;
+
 public:
 #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
@@ -280,6 +283,8 @@ public:
 
   bool merge(const ExecutionState &b);
   void dumpStack(llvm::raw_ostream &out) const;
+  ref<PerryExpr> getPerryExpr(PerryExprManager &perryExprManager,
+                              const ref<Expr> &e);
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };

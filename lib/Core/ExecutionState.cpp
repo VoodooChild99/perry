@@ -18,6 +18,7 @@
 #include "klee/Module/KModule.h"
 #include "klee/Support/Casting.h"
 #include "klee/Support/OptionCategories.h"
+#include "klee/Perry/PerryExprManager.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/Support/CommandLine.h"
@@ -111,7 +112,8 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     pTrace(state.pTrace),
     regAccesses(state.regAccesses),
     conditions(state.conditions),
-    retVal(state.retVal) {
+    retVal(state.retVal),
+    fast_conversion_table(state.fast_conversion_table) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);
 }
@@ -355,6 +357,20 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
       out << " at " << ii.file << ":" << ii.line;
     out << "\n";
     target = sf.caller;
+  }
+}
+
+ref<PerryExpr> ExecutionState::
+getPerryExpr(PerryExprManager &perryExprManager, const ref<Expr> &e) {
+  auto it = fast_conversion_table.find(e);
+  if (it == fast_conversion_table.end()) {
+    // slow path, ask expr manager for help
+    ref<PerryExpr> ret = perryExprManager.acquirePerryExpr(e);
+    fast_conversion_table.insert(std::make_pair(e, ret));
+    return ret;
+  } else {
+    // fast path
+    return (*it).second;
   }
 }
 

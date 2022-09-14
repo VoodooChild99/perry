@@ -1362,7 +1362,8 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
   }
 
   state.addConstraint(condition);
-  state.conditions.emplace_back(perryExprManager.acquirePerryExpr(condition));
+  state.conditions.emplace_back(
+    state.getPerryExpr(perryExprManager, condition));
   if (ivcEnabled)
     doImpliedValueConcretization(state, condition, 
                                  ConstantExpr::alloc(1, Expr::Bool));
@@ -3880,7 +3881,7 @@ void Executor::terminateState(ExecutionState &state, bool isNormalExit) {
   // TODO: collect some information before the state is to be removed
   PerryTrace::Constraints finalConstraints;
   for (auto &E : state.constraints) {
-    finalConstraints.emplace_back(perryExprManager.acquirePerryExpr(E));
+    finalConstraints.emplace_back(state.getPerryExpr(perryExprManager, E));
   }
 
   perryRecords.emplace_back(PerryRecord(isNormalExit, state.retVal,
@@ -4451,10 +4452,10 @@ static void logRegOp(PerryExprManager &perryExprManager,
   if (rts != ObjectState::NO_PERSIST_TAINT) {
     rts |= wos->getTaintReadCtx(offset_concrete);
 
-    ref<PerryExpr> ER = perryExprManager.acquirePerryExpr(ExprInReg);
+    ref<PerryExpr> ER = state.getPerryExpr(perryExprManager, ExprInReg);
     std::vector<ref<PerryExpr>> cur_constraints;
     for (auto &CE : state.constraints) {
-      cur_constraints.push_back(perryExprManager.acquirePerryExpr(CE));
+      cur_constraints.push_back(state.getPerryExpr(perryExprManager, CE));
     }
     if (isWrite) {
       state.pTrace.emplace_back(
