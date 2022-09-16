@@ -1905,6 +1905,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   z3::expr_vector wr_actions_final(z3builder.getContext());
   std::vector<z3::expr_vector> wr_actions;
   for (auto &key : wrDepMap) {
+    // errs() << "wr##############################\n";
+    // errs() << key.first << "----------------------------\n";
     std::set<SymRead> keySyms;
     collectContainedSym(key.first.expr, keySyms);
     auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
@@ -1915,15 +1917,13 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       = z3builder.inferBitLevelConstraint(key_cs, key.first.sym,
                                           bit_level_expr_key);
     bit_constraints_key = bit_constraints_key.simplify();
-    // errs() << "wr##############################\n";
-    // errs() << key.first << "----------------------------\n";
     z3::expr_vector val_constraints(z3builder.getContext());
     for (auto &val : key.second) {
       if (!val.constraints.empty()) {
         // there're constraints on the written value
+        // errs() << val << "...................................\n";
         std::set<SymRead> fuckSyms;
         collectContainedSym(val.after, fuckSyms);
-        // errs() << val << "...................................\n";
         auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
                                                   false, fuckSyms);
         z3::expr_vector bit_level_expr_before(z3builder.getContext());

@@ -18,8 +18,12 @@ z3::expr PerryZ3Builder::toZ3Expr(const ref<PerryExpr> &PE) {
     case Expr::Read: {
       const PerryReadExpr *RE = cast<PerryReadExpr>(PE);
       if (RE->idx->getKind() != Expr::Constant) {
-        klee_error("Symbolic idx is not supported "
-                   "when converting a PerryReadExpr to a Z3 expression");
+        std::string err_msg;
+        llvm::raw_string_ostream OS(err_msg);
+        OS << "Symbolic idx is not supported "
+           << "when converting a PerryReadExpr to a Z3 expression: ";
+        RE->idx->print(OS);
+        klee_error("%s", err_msg.c_str());
       }
       PerryConstantExpr *CE = cast<PerryConstantExpr>(RE->idx.get());
       // auto const_ce = CE->getAPValue().getZExtValue();
