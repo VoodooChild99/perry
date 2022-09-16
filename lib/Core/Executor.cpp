@@ -3713,8 +3713,10 @@ void Executor::doDumpStates() {
   updateStates(nullptr);
 }
 
-void Executor::run(ExecutionState &initialState) {
-  bindModuleConstants();
+void Executor::run(ExecutionState &initialState, bool do_bind) {
+  if (do_bind) {
+    bindModuleConstants();
+  }
 
   // Delay init till now so that ticks don't accrue during optimization and such.
   timers.reset();
@@ -4598,38 +4600,38 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             // TODO: support symbolic offset?
             toConstant(state, offset, "write taint must be concrete")
               ->toMemory(&offset_concrete);
-            for (unsigned int i = 0; i < type / 8; ++i) {
-              wos->writeTaint(offset_concrete + i, *ts);
-            }
+                for (unsigned int i = 0; i < type / 8; ++i) {
+                  wos->writeTaint(offset_concrete + i, *ts);
+                }
             logRegOp(perryExprManager, state, wos, offset_concrete,
-                     type, value, true, ts);
-          }
-        }          
-      } else {
+                         type, value, true, ts);
+              }
+              }
+          } else {
         ref<Expr> result = os->read(offset, type);
         
         if (interpreterOpts.MakeConcreteSymbolic)
           result = replaceReadWithSymbolic(state, result);
         
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
-          TaintSet t = *ts;
-          uint64_t offset_concrete;
+              TaintSet t = *ts;
+              uint64_t offset_concrete;
           // TODO: support symbolic offset?
           toConstant(state, offset, "read taint must be concrete")
             ->toMemory(&offset_concrete);
-          for (unsigned int i = 0; i < type / 8; ++i) {
-            TaintSet *rt = os->readTaint(offset_concrete);
-            if (rt) {
-              mergeTaint(t, *rt);
-            }
-          }
+              for (unsigned int i = 0; i < type / 8; ++i) {
+                TaintSet *rt = os->readTaint(offset_concrete);
+                if (rt) {
+                  mergeTaint(t, *rt);
+                }
+              }
           logRegOp(perryExprManager, state, os, offset_concrete,
-                   type, result, false, nullptr, target->inst);
-          if (do_bitband) {
-            result = ZExtExpr::create(result, orig_type);
-          }
+                       type, result, false, nullptr, target->inst);
+              if (do_bitband) {
+                result = ZExtExpr::create(result, orig_type);
+              }
           bindLocal(target, state, result, &t);
-        } else {
+            } else {
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
@@ -4692,8 +4694,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             toConstant(state, offset, "write taint must be concrete")
               ->toMemory(&offset_concrete);
             for (unsigned int i = 0; i < bytes; ++i) {
-              wos->writeTaint(offset_concrete + i, *ts);
-            }
+                  wos->writeTaint(offset_concrete + i, *ts);
+                }
             logRegOp(perryExprManager, state, wos, offset_concrete,
                      bytes * 8, value, true, ts);
           }
@@ -4709,18 +4711,18 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           toConstant(state, offset, "read taint must be concrete")
             ->toMemory(&offset_concrete);
           for (unsigned int i = 0; i < bytes; ++i) {
-            TaintSet *rt = os->readTaint(offset_concrete);
-            if (rt) {
-              mergeTaint(t, *rt);
-            }
-          }
+                TaintSet *rt = os->readTaint(offset_concrete);
+                if (rt) {
+                  mergeTaint(t, *rt);
+                }
+              }
           logRegOp(perryExprManager, state, os, offset_concrete,
                    bytes * 8, result, false, nullptr, target->inst);
-          if (do_bitband) {
-            result = ZExtExpr::create(result, orig_type);
-          }
+              if (do_bitband) {
+                result = ZExtExpr::create(result, orig_type);
+              }
           bindLocal(target, *bound, result, &t);
-        } else {
+            } else {
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
@@ -4915,7 +4917,7 @@ void Executor::runFunctionAsMain(Function *f,
   initializeGlobals(*state);
 
   processTree = std::make_unique<PTree>(state);
-  run(*state);
+  run(*state, true);
   processTree = nullptr;
 
   // hack to clear memory objects
@@ -4929,7 +4931,7 @@ void Executor::runFunctionAsMain(Function *f,
     statsTracker->done();
 }
 
-void Executor::runFunctionJustAsIt(llvm::Function *f) {
+void Executor::runFunctionJustAsIt(llvm::Function *f, bool do_bind) {
   // force deterministic initialization of memory objects
   srand(1);
   srandom(1);
@@ -4951,7 +4953,7 @@ void Executor::runFunctionJustAsIt(llvm::Function *f) {
   initializeGlobals(*state);
 
   processTree = std::make_unique<PTree>(state);
-  run(*state);
+  run(*state, do_bind);
   processTree = nullptr;
 
   // hack to clear memory objects

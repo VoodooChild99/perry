@@ -1185,7 +1185,8 @@ static void singlerun(std::vector<bool> &replayPath,
                       std::string mainFunctionName,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
-                      PerryExprManager &PEM);
+                      PerryExprManager &PEM,
+                      bool do_bind);
 
 static int workerPID;
 
@@ -2385,11 +2386,13 @@ int main(int argc, char **argv) {
   std::map<std::string, std::vector<PerryRecord>> all_records;
   PerryExprManager PEM;
 
+  bool do_bind = true;
   for (auto TopFunc : TopLevelFunctions) {
     records.clear();
     singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
-              liveTaint, records, PEM);
+              liveTaint, records, PEM, do_bind);
     all_records[TopFunc] = std::move(records);
+    do_bind = false;
   }
 
   postProcess(TopLevelFunctions, FunctionToSymbolName, all_records, liveTaint,
@@ -2480,7 +2483,8 @@ static void runKlee(std::vector<bool> &replayPath,
                     TaintSet &ts,
                     int fd,
                     std::vector<PerryRecord> &records,
-                    PerryExprManager &PEM)
+                    PerryExprManager &PEM,
+                    bool do_bind)
 {
   KleeHandler *handler = new KleeHandler(0, nullptr);
   Interpreter *interpreter =
@@ -2558,7 +2562,7 @@ static void runKlee(std::vector<bool> &replayPath,
                   sys::StrError(errno).c_str());
     }
   }
-  interpreter->runFunctionJustAsIt(mainFn);
+  interpreter->runFunctionJustAsIt(mainFn, do_bind);
 
   while (!seeds.empty()) {
     kTest_free(seeds.back());
@@ -2635,7 +2639,8 @@ static void singlerun(std::vector<bool> &replayPath,
                       std::string mainFunctionName,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
-                      PerryExprManager &PEM)
+                      PerryExprManager &PEM,
+                      bool do_bind)
 {
 
   // FIXME: Change me to std types.
@@ -2674,12 +2679,12 @@ static void singlerun(std::vector<bool> &replayPath,
       }
       close(crpwfd[0]);
       runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts,
-              cwprfd[1], records, PEM);
+              cwprfd[1], records, PEM, do_bind);
       exit(0);
     }
   } else {
     // no need to fork
     runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts, 0,
-            records, PEM);
+            records, PEM, do_bind);
   }
 }

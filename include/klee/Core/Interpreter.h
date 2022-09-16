@@ -173,7 +173,7 @@ public:
                                  char **argv,
                                  char **envp) = 0;
 
-  virtual void runFunctionJustAsIt(llvm::Function *f) = 0;
+  virtual void runFunctionJustAsIt(llvm::Function *f, bool do_bind) = 0;
 
   /*** Runtime options ***/
 

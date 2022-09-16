@@ -229,7 +229,7 @@ private:
   
   void executeInstruction(ExecutionState &state, KInstruction *ki);
 
-  void run(ExecutionState &initialState);
+  void run(ExecutionState &initialState, bool do_bind);
 
   // Given a concrete object in our [klee's] address space, add it to 
   // objects checked code can reference.
@@ -539,7 +539,7 @@ public:
   void runFunctionAsMain(llvm::Function *f, int argc, char **argv,
                          char **envp) override;
 
-  void runFunctionJustAsIt(llvm::Function *f) override;
+  void runFunctionJustAsIt(llvm::Function *f, bool do_bind) override;
 
   /*** Runtime options ***/
 
