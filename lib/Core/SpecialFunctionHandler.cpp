@@ -1294,7 +1294,7 @@ handleGetReturnValue(ExecutionState &state, KInstruction *target,
   if (!CE_val) {
     std::string err_msg;
     llvm::raw_string_ostream OS(err_msg);
-    OS << "Un-constant value not supported: ";
+    OS << "Un-constant return value not supported: ";
     val->print(OS);
     executor.terminateStateOnUserError(state, err_msg.c_str());
     return;
