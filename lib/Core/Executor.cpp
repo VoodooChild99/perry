@@ -4596,7 +4596,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
           wos->write(offset, value);
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
-            uint64_t offset_concrete;
+            uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
             toConstant(state, offset, "write taint must be concrete")
               ->toMemory(&offset_concrete);
@@ -4615,12 +4615,12 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
               TaintSet t = *ts;
-              uint64_t offset_concrete;
+              uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
           toConstant(state, offset, "read taint must be concrete")
             ->toMemory(&offset_concrete);
               for (unsigned int i = 0; i < type / 8; ++i) {
-                TaintSet *rt = os->readTaint(offset_concrete);
+                TaintSet *rt = os->readTaint(offset_concrete + i);
                 if (rt) {
                   mergeTaint(t, *rt);
                 }
@@ -4689,7 +4689,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           }
           wos->write(offset, value);
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
-            unsigned offset_concrete;
+            uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
             toConstant(state, offset, "write taint must be concrete")
               ->toMemory(&offset_concrete);
@@ -4706,12 +4706,12 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
           TaintSet t = *ts;
-          unsigned offset_concrete;
+          uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
           toConstant(state, offset, "read taint must be concrete")
             ->toMemory(&offset_concrete);
           for (unsigned int i = 0; i < bytes; ++i) {
-                TaintSet *rt = os->readTaint(offset_concrete);
+                TaintSet *rt = os->readTaint(offset_concrete + i);
                 if (rt) {
                   mergeTaint(t, *rt);
                 }
