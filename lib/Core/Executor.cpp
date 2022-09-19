@@ -4691,12 +4691,12 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
-            toConstant(state, offset, "write taint must be concrete")
+            toConstant(*bound, offset, "write taint must be concrete")
               ->toMemory(&offset_concrete);
             for (unsigned int i = 0; i < bytes; ++i) {
                   wos->writeTaint(offset_concrete + i, *ts);
                 }
-            logRegOp(perryExprManager, state, wos, offset_concrete,
+            logRegOp(perryExprManager, *bound, wos, offset_concrete,
                      bytes * 8, value, true, ts);
           }
         }
@@ -4708,7 +4708,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           TaintSet t = *ts;
           uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
-          toConstant(state, offset, "read taint must be concrete")
+          toConstant(*bound, offset, "read taint must be concrete")
             ->toMemory(&offset_concrete);
           for (unsigned int i = 0; i < bytes; ++i) {
                 TaintSet *rt = os->readTaint(offset_concrete + i);
@@ -4716,7 +4716,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                   mergeTaint(t, *rt);
                 }
               }
-          logRegOp(perryExprManager, state, os, offset_concrete,
+          logRegOp(perryExprManager, *bound, os, offset_concrete,
                    bytes * 8, result, false, nullptr, target->inst);
               if (do_bitband) {
                 result = ZExtExpr::create(result, orig_type);
