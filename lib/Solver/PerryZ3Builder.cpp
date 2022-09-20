@@ -291,7 +291,13 @@ z3::expr PerryZ3Builder::
 toZ3ExprAnd(const std::vector<ref<PerryExpr>> &CS) {
   z3::expr_vector tmp(ctx);
   for (auto &c : CS) {
-    tmp.push_back(toZ3Expr(c));
+    auto single = toZ3Expr(c);
+    if (containsUnsupportedExpr(single)) {
+      klee_warning("Unsupported z3 expression in constraints: %s, ignore",
+                   single.to_string().c_str());
+      continue;
+    }
+    tmp.push_back(single);
   }
   unsigned tmp_size = tmp.size();
   if (tmp_size == 0) {
@@ -469,11 +475,74 @@ ImplVisitLogicOperator(EQ) {
   }
 }
 
+// mode == 0: sym <= val
+// mode == 1: sym <= sym
+z3::expr PerryZ3Builder::
+constructULEQFromVector(const z3::expr_vector& left,
+                        const z3::expr_vector& right, int mode,
+                        z3::expr_vector &bool_vars,
+                        std::map<unsigned, unsigned> &bool_id_to_idx)
+{
+  assert(mode == 0 || mode == 1);
+  unsigned num_bits = left.size();
+  if (mode == 0) {
+    z3::expr_vector local_and(ctx);
+    z3::expr_vector syms(ctx);
+    z3::expr_vector vals(ctx);
+    syms = left;
+    vals = right;
+    // sym <= val
+    std::vector<unsigned> set_idx;
+    for (unsigned i = num_bits; i > 0; --i) {
+      auto sym_bit = syms[i - 1];
+      auto val_bit = vals[i - 1];
+      if (val_bit.is_true()) {
+        // save the index to this bit, no constraint
+        set_idx.push_back(i - 1);
+      } else {
+        assert(val_bit.is_false());
+        z3::expr_vector local_or(ctx);
+        local_or.push_back(!sym_bit);
+        for (auto idx : set_idx) {
+          auto tmp_expr = bool_vars[bool_id_to_idx[syms[idx].id()]];
+          local_or.push_back(!tmp_expr);
+        }
+        if (local_or.size() == 1) {
+          local_and.push_back(local_or[0]);
+        } else if (local_or.size() > 1) {
+          local_and.push_back(z3::mk_or(local_or));
+        }
+      }
+    }
+    if (local_and.size() == 1) {
+      return local_and[0];
+    } else {
+      assert(local_and.size() > 1);
+      return z3::mk_and(local_and);
+    }
+  } else {
+    // (!syma[sz] & symb[sz]) || ((syma[sz] == symb[sz]) && (...))
+    z3::expr left_bit = left[0];
+    z3::expr right_bit = right[0];
+    z3::expr tmp = ((!left_bit) && right_bit) ||
+                   ((left_bit && right_bit) || ((!left_bit) && (!right_bit)));
+    for (unsigned i = 1; i < num_bits; ++i) {
+      left_bit = left[i];
+      right_bit = right[i];
+      tmp = ((!left_bit) && right_bit) ||
+            (((left_bit && right_bit) || ((!left_bit) && (!right_bit))) && tmp);
+    }
+    return tmp.simplify();
+  }
+}
+
 ImplVisitLogicOperator(ULEQ) {
   auto left = e.arg(0);
   auto right = e.arg(1);
+  int mode;
   if (!left.is_numeral() && right.is_numeral()) {
-    // do nothing
+    // sym <= val
+    mode = 0;
   } else if (left.is_numeral() && !right.is_numeral()) {
     // sym >= val := !((sym <= val) && !(sym == val))
     visitLogicBitLevel(
@@ -481,7 +550,8 @@ ImplVisitLogicOperator(ULEQ) {
       result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
     return;
   } else {
-    klee_error("SYM ULEQ SYM is not supported");
+    // sym <= sym
+    mode = 1;
   }
   z3::expr_vector left_res(ctx);
   z3::expr_vector right_res(ctx);
@@ -491,39 +561,19 @@ ImplVisitLogicOperator(ULEQ) {
     right, right_res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
   unsigned num_bits = left_res.size();
   assert(num_bits == right_res.size());
-  z3::expr_vector local_and(ctx);
-  z3::expr_vector syms(ctx);
-  z3::expr_vector vals(ctx);
-  syms = left_res;
-  vals = right_res;
-  // sym <= val
-  std::vector<unsigned> set_idx;
-  for (unsigned i = num_bits; i > 0; --i) {
-    auto sym_bit = syms[i - 1];
-    auto val_bit = vals[i - 1];
-    if (val_bit.is_true()) {
-      // save the index to this bit, no constraint
-      set_idx.push_back(i - 1);
-    } else {
-      assert(val_bit.is_false());
-      z3::expr_vector local_or(ctx);
-      local_or.push_back(!sym_bit);
-      for (auto idx : set_idx) {
-        auto tmp_expr = bool_vars[bool_id_to_idx[syms[idx].id()]];
-        local_or.push_back(!tmp_expr);
-      }
-      if (local_or.size() == 1) {
-        local_and.push_back(local_or[0]);
-      } else if (local_or.size() > 1) {
-        local_and.push_back(z3::mk_or(local_or));
-      }
-    }
-  }
-  if (local_and.size() == 1) {
-    result.push_back(local_and[0]);
-  } else if (local_and.size() > 1) {
-    result.push_back(z3::mk_and(local_and));
-  }
+  assert(num_bits > 0);
+  result.push_back(constructULEQFromVector(left_res, right_res, mode,
+                                           bool_vars, bool_id_to_idx));
+}
+
+ImplVisitLogicOperator(ULT) {
+  auto left = e.arg(0);
+  auto right = e.arg(1);
+  // a < b := (a <= b) && (a != b)
+  visitLogicBitLevel(
+    z3::ule(left, right) && !(left == right),
+    result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  return;
 }
 
 // bv logical operators
@@ -573,6 +623,17 @@ ImplVisitLogicOperator(BOR) {
   }
 }
 
+ImplVisitLogicOperator(BNOT) {
+  assert(e.num_args() == 1);
+  visitLogicBitLevel(
+    e.arg(0), result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  unsigned num_bits = result.size();
+  for (unsigned i = 0; i < num_bits; ++i) {
+    auto tmp = !result[i];
+    result.set(i, tmp);
+  }
+}
+
 // bv concat & extract
 ImplVisitLogicOperator(CONCAT) {
   auto num_args = e.num_args();
@@ -608,6 +669,10 @@ ImplVisitLogicOperator(BMUL) {
   assert(e.num_args() == 2);
   auto left = e.arg(0);
   auto right = e.arg(1);
+  if (!left.is_numeral() && !right.is_numeral()) {
+    klee_error("BMUL of two symbols are not supported: %s",
+               e.to_string().c_str());
+  }
   assert(left.is_numeral() || right.is_numeral());
   uint64_t num;
   z3::expr_vector res(ctx);
@@ -620,15 +685,125 @@ ImplVisitLogicOperator(BMUL) {
     visitLogicBitLevel(
       left, res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
   }
-  assert(bits64::isPowerOfTwo(num));
-  unsigned bit_idx = bits64::indexOfSingleBit(num);
   auto num_bits = res.size();
   for (unsigned i = 0; i < num_bits; ++i) {
-    if (i < bit_idx) {
-      result.push_back(ctx.bool_val(false));
-    } else {
-      result.push_back(res[i - bit_idx]);
+    result.push_back(ctx.bool_val(false));
+  }
+  while (num != 0) {
+    unsigned bit_idx = bits64::indexOfRightmostBit(num);
+    num = bits64::withoutRightmostBit(num);
+    z3::expr_vector tmp(ctx);
+    for (unsigned i = 0; i < num_bits; ++i) {
+      if (i < bit_idx) {
+        tmp.push_back(ctx.bool_val(false));
+      } else {
+        tmp.push_back(res[i - bit_idx]);
+      }
     }
+    result = constructBADDFromVector(result, tmp);
+  }
+}
+
+z3::expr_vector PerryZ3Builder::
+constructBADDFromVector(const z3::expr_vector& left,
+                        const z3::expr_vector& right)
+{
+  unsigned num_bits = left.size();
+  z3::expr_vector ret(ctx);
+  ret.push_back(((left[0] && (!right[0])) || ((!left[0]) && right[0])).simplify());
+  z3::expr carry_bit = (left[0] && right[0]).simplify();
+  for (unsigned i = 1; i < num_bits; ++i) {
+    z3::expr sum_of_two = (left[i] && (!right[i])) || ((!left[i]) && right[i]);
+    sum_of_two = (sum_of_two && (!carry_bit)) || ((!sum_of_two) && carry_bit);
+    carry_bit = (left[i] && right[i]) || ((left[i] || right[i]) && carry_bit);
+    carry_bit = carry_bit.simplify();
+    ret.push_back(sum_of_two.simplify());
+  }
+  return ret;
+}
+
+z3::expr_vector PerryZ3Builder::
+constructBSUBFromVector(const z3::expr_vector& left,
+                        const z3::expr_vector& right)
+{
+  // left - right = left + right' + 1
+  unsigned num_bits = left.size();
+  z3::expr_vector not_right(ctx);
+  for (unsigned i = 0; i < num_bits; ++i) {
+    not_right.push_back(!right[i]);
+  }
+  z3::expr_vector one(ctx);
+  one.push_back(ctx.bool_val(true));
+  for (unsigned i = 1; i < num_bits; ++i) {
+    one.push_back(ctx.bool_val(false));
+  }
+  return constructBADDFromVector(constructBADDFromVector(left, not_right), one);
+}
+
+ImplVisitLogicOperator(BADD) {
+  unsigned num_operands = e.num_args();
+  assert(num_operands > 0);
+  visitLogicBitLevel(
+    e.arg(0), result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  unsigned num_bits = result.size();
+  unsigned idx = 1;
+  while (idx < num_operands) {
+    z3::expr_vector cur(ctx);
+    visitLogicBitLevel(
+      e.arg(idx), cur, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+    assert(cur.size() == num_bits);
+    ++idx;
+    // result = result + cur
+    assert(num_bits > 0);
+    result = constructBADDFromVector(result, cur);
+  }
+}
+
+ImplVisitLogicOperator(BSUB) {
+  // a - b = a + b' + 1
+  assert(e.num_args() == 2);
+  unsigned num_bits = e.get_sort().bv_size();
+  visitLogicBitLevel(
+    e.arg(0) + (~(e.arg(1))) + ctx.bv_val(1, num_bits),
+    result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+}
+
+ImplVisitLogicOperator(BUDIV) {
+  assert(e.num_args() == 2);
+  z3::expr_vector dividend(ctx);
+  z3::expr_vector divisor(ctx);
+  z3::expr_vector quotient(ctx);
+  unsigned num_bits = e.get_sort().bv_size();
+  visitLogicBitLevel(
+    z3::concat(ctx.bv_val(0, num_bits), e.arg(0)),
+    dividend, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  visitLogicBitLevel(
+    z3::concat(e.arg(1), ctx.bv_val(0, num_bits)),
+    divisor, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  auto zero = ctx.bool_val(false);
+  for (unsigned i = 0; i < num_bits; ++i) {
+    // 1. dividend << 1
+    for (unsigned j = 2 * num_bits; j > 1; --j) {
+      auto prev = dividend[j - 2];
+      dividend.set(j - 1, prev);
+    }
+    dividend.set(0, zero);
+    // 2. quotient[i] = (dividend >= divisor)
+    z3::expr q_bit = constructULEQFromVector(divisor, dividend, 1,
+                                             bool_vars, bool_id_to_idx);
+    q_bit = q_bit.simplify();
+    quotient.push_back(q_bit);
+    // 3. dividend = (quotient[i] && (dividend - divisor)) || dividend
+    z3::expr_vector tmp = constructBSUBFromVector(dividend, divisor);
+    for (unsigned j = 0; j < 2 * num_bits; ++j) {
+      z3::expr new_dividend = ((q_bit && tmp[j]) || ((!q_bit) && dividend[j]));
+      new_dividend = new_dividend.simplify();
+      dividend.set(j, new_dividend);
+    }
+  }
+  for (unsigned i = 0; i < num_bits; ++i) {
+    result.push_back(quotient.back());
+    quotient.pop_back();
   }
 }
 
@@ -686,7 +861,7 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
         }
         if (local_and.size() == 1) {
           ret.push_back(local_and[0]);
-        } else {
+        } else if (local_and.size() > 1){
           ret.push_back(z3::mk_and(local_and));
         }
         break;
@@ -702,7 +877,7 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
         }
         if (local_or.size() == 1) {
           ret.push_back(local_or[0]);
-        } else {
+        } else if (local_or.size() > 1){
           ret.push_back(z3::mk_or(local_or));
         }
         break;
@@ -721,7 +896,9 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
               break;
             }
           }
-          ret.push_back(!res[0]);
+          if (res.size() > 0) {
+            ret.push_back(!res[0]);
+          }
         }
         break;
       }
@@ -736,7 +913,7 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
         }
         if (local_xor.size() == 1) {
           ret.push_back(local_xor[0]);
-        } else {
+        } else if (local_xor.size() > 1){
           ret.push_back(z3::mk_xor(local_xor));
         }
         break;
@@ -809,6 +986,11 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
             e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
           break;
         }
+        case Z3_OP_BNOT: {
+          visitLogicBNOT(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
         // bv concat and extract
         case Z3_OP_CONCAT: {
           visitLogicCONCAT(
@@ -823,6 +1005,27 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
         // bv arith
         case Z3_OP_BMUL: {
           visitLogicBMUL(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_BADD: {
+          visitLogicBADD(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_BSUB: {
+          visitLogicBSUB(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_BUDIV: {
+          // TODO: add constraint indicating that the divisor must not be 0
+          visitLogicBUDIV(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_BUDIV_I: {
+          visitLogicBUDIV(
             e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
           break;
         }
@@ -866,6 +1069,11 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
       }
       case Z3_OP_ULEQ: {
         visitLogicULEQ(
+          e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+        break;
+      }
+      case Z3_OP_ULT: {
+        visitLogicULT(
           e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
         break;
       }
@@ -1189,7 +1397,17 @@ inferBitLevelConstraintInternal(const z3::expr &in_cs, const SymRead &SR,
       one_or_zero = 0;
     } else {
       // should not happen
-      klee_error("inferBitLevelConstraint: should not happen");
+      std::string err_msg;
+      llvm::raw_string_ostream OS(err_msg);
+      OS << "inferBitLevelConstraint: should not happen\n"
+         << "In constraints: \n"
+         << in_cs.to_string() << "\n"
+         << "Symbol: " << SR << "\n"
+         << "Blacklist:\n"
+         << blacklist.to_string() << "\n"
+         << "Contain concrete: " << contain_concrete << "\n"
+         << "---------------------------------\n";
+      klee_error("%s", err_msg.c_str());
     }
     auto sub_exp = (target_expr.extract(i, i) == one_or_zero);
     skip = false;
@@ -1273,4 +1491,33 @@ z3::expr PerryZ3Builder::mk_or(const z3::expr_vector &v) {
   } else {
     return z3::mk_or(v);
   }
+}
+
+bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
+  static const std::set<Z3_decl_kind> supported_expr_kind {
+    Z3_OP_AND, Z3_OP_OR, Z3_OP_XOR, Z3_OP_NOT,
+    Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT,
+    Z3_OP_BAND, Z3_OP_BOR, Z3_OP_BNOT,
+    Z3_OP_CONCAT, Z3_OP_EXTRACT,
+    Z3_OP_BMUL, Z3_OP_BADD, Z3_OP_BSUB, Z3_OP_BUDIV, Z3_OP_BUDIV_I
+  };
+  z3::expr_vector WL(ctx);
+  WL.push_back(e);
+  while (!WL.empty()) {
+    auto cur_expr = WL.back();
+    WL.pop_back();
+    if (cur_expr.is_const() || cur_expr.is_numeral()) {
+      continue;
+    }
+    auto cur_kind = cur_expr.decl().decl_kind();
+    if (supported_expr_kind.find(cur_kind) ==
+        supported_expr_kind.end())
+    {
+      return true;
+    }
+    for (auto arg : cur_expr.args()) {
+      WL.push_back(arg);
+    }
+  }
+  return false;
 }

@@ -69,18 +69,40 @@ private:
                            std::map<unsigned, unsigned> &bool_id_to_idx,      \
                            unsigned &cnt)                                     \
 
+  // bool logical
   DefVisitLogicOperator(AND);
   DefVisitLogicOperator(OR);
   DefVisitLogicOperator(XOR);
   DefVisitLogicOperator(NOT);
+  // bv relation
   DefVisitLogicOperator(EQ);
   DefVisitLogicOperator(ULEQ);
+  DefVisitLogicOperator(ULT);
+  // bv logical
   DefVisitLogicOperator(BAND);
   DefVisitLogicOperator(BOR);
+  DefVisitLogicOperator(BNOT);
+  // bv segmentation
   DefVisitLogicOperator(CONCAT);
   DefVisitLogicOperator(EXTRACT);
+  // bv arith
   DefVisitLogicOperator(BMUL);
+  DefVisitLogicOperator(BADD);
+  DefVisitLogicOperator(BSUB);
+  DefVisitLogicOperator(BUDIV);
   #undef DefVisitLogicOperator
+
+  z3::expr
+  constructULEQFromVector(const z3::expr_vector& left,
+                          const z3::expr_vector& right, int mode,
+                          z3::expr_vector &bool_vars,
+                          std::map<unsigned, unsigned> &bool_id_to_idx);
+  z3::expr_vector
+  constructBADDFromVector(const z3::expr_vector& left,
+                          const z3::expr_vector& right);
+  z3::expr_vector
+  constructBSUBFromVector(const z3::expr_vector& left,
+                          const z3::expr_vector& right);
   
   z3::expr_vector inferBitLevelConstraintInternal(const z3::expr &in_cs,
                                                   const SymRead &SR,
@@ -100,6 +122,7 @@ private:
                                   bool simplify_not,
                                   bool preserve_all);
 
+  bool containsUnsupportedExpr(const z3::expr &e);
   z3::context ctx;
 };
 
