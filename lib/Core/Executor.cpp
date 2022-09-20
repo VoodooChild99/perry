@@ -1362,8 +1362,6 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
   }
 
   state.addConstraint(condition);
-  state.conditions.emplace_back(
-    state.getPerryExpr(perryExprManager, condition));
   if (ivcEnabled)
     doImpliedValueConcretization(state, condition, 
                                  ConstantExpr::alloc(1, Expr::Bool));
@@ -3888,7 +3886,7 @@ void Executor::terminateState(ExecutionState &state, bool isNormalExit) {
 
   perryRecords.emplace_back(PerryRecord(isNormalExit, state.retVal,
                                         finalConstraints, state.regAccesses,
-                                        state.pTrace, state.conditions));
+                                        state.pTrace));
 
   interpreterHandler->incPathsExplored();
 
@@ -4462,7 +4460,6 @@ static void logRegOp(PerryExprManager &perryExprManager,
     if (isWrite) {
       state.pTrace.emplace_back(
         PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   state.conditions.size(),
                                    cur_constraints));
       state.regAccesses.emplace_back(
         RegisterAccess::alloc(rts, RegisterAccess::REG_WRITE,
@@ -4483,7 +4480,6 @@ static void logRegOp(PerryExprManager &perryExprManager,
     } else {
       state.pTrace.emplace_back(
         PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   state.conditions.size(),
                                    cur_constraints));
       state.regAccesses.emplace_back(
         RegisterAccess::alloc(rts, RegisterAccess::REG_READ,

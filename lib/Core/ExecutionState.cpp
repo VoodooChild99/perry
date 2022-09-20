@@ -111,7 +111,6 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     taintedOutcomes(state.taintedOutcomes),
     pTrace(state.pTrace),
     regAccesses(state.regAccesses),
-    conditions(state.conditions),
     retVal(state.retVal),
     fast_conversion_table(state.fast_conversion_table) {
   for (const auto &cur_mergehandler: openMergeStack)

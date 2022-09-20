@@ -1539,6 +1539,30 @@ static int inLoopCondition(Instruction *inst) {
   }
 }
 
+// find the index of the last common expr of `of` and 'in' in `in`
+// return value:
+// -1: no match
+// else: index in `in`
+static int findLastIn(const PerryTrace::Constraints &of,
+                           const PerryTrace::Constraints &in)
+{
+  unsigned of_size = of.size();
+  unsigned in_size = in.size();
+  if (of_size == 0 || in_size == 0) {
+    return 0;
+  }
+  for (unsigned i = of_size; i > 0; --i) {
+    auto &of_expr = of[i - 1];
+    for (unsigned j = in_size; j > 0; --j) {
+      auto &in_expr = in[j - 1];
+      if (of_expr == in_expr) {
+        return j;
+      }
+    }
+  }
+  return -1;
+}
+
 static void
 postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::string> &FunctionToSymbolName,
@@ -1587,7 +1611,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       auto &final_constraints = rec.final_constraints;
       auto returned_value = rec.return_value;
       auto &reg_accesses = rec.register_accesses;
-      auto &conditions = rec.conditions;
       auto success_return = rec.success;
       state_idx += 1;
       std::vector<ref<PerryExpr>> lastWriteConstraint;
@@ -1720,24 +1743,31 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   std::set<SymRead> before_syms;
                   collectContainedSym(last_result, before_syms);
                   // look-before to find related constraints
-                  for (unsigned j = last_PTI.condition_idx; j < PTI.condition_idx; ++j) {
-                    if (containsReadRelated(before_syms, "", conditions[j])) {
-                      before_constraints.push_back(conditions[j]);
+                  int this_idx = findLastIn(last_PTI.cur_constraints,
+                                            PTI.cur_constraints);
+                  assert(this_idx != -1);
+                  for (unsigned j = this_idx; j < num_cs; ++j) {
+                    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+                      before_constraints.push_back(PTI.cur_constraints[j]);
                     }
                   }
                   if (!before_constraints.empty()) {
                     // now we have a potential dependent pair
                     // look-after to find the constraint this read must meet to 
                     // successfully return
+                    auto &constraint_to_use
+                      = (i == trace_size - 1) ? final_constraints
+                                              : trace[i + 1].cur_constraints;
                     unsigned num_constraint_on_read
-                      = (i == trace_size - 1) ? conditions.size()
-                                              : trace[i + 1].condition_idx;
+                      = constraint_to_use.size();
                     auto this_result = cur_access->ExprInReg;
                     std::set<SymRead> after_syms;
                     collectContainedSym(this_result, after_syms);
-                    for (unsigned j = PTI.condition_idx; j < num_constraint_on_read; ++j) {
-                      if (containsReadRelated(after_syms, "", conditions[j])) {
-                        after_constraints.push_back(conditions[j]);
+                    this_idx = findLastIn(PTI.cur_constraints, constraint_to_use);
+                    assert(this_idx != -1);
+                    for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
+                      if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
+                        after_constraints.push_back(constraint_to_use[j]);
                       }
                     }
                     if (!after_constraints.empty()) {
@@ -1779,16 +1809,20 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                 if (inLoopCondition(cur_access->place) > 0) {
                   auto &last_PTI = trace[i - 1];
                   auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+                  auto &constraint_to_use
+                    = (i == trace_size - 1) ? final_constraints
+                                            : trace[i + 1].cur_constraints;
                   unsigned num_constraint_on_read
-                      = (i == trace_size - 1) ? conditions.size()
-                                              : trace[i + 1].condition_idx;
+                    = constraint_to_use.size();
                   auto this_result = cur_access->ExprInReg;
                   std::set<SymRead> after_syms;
                   collectContainedSym(this_result, after_syms);
                   std::vector<ref<PerryExpr>> after_constraints;
-                  for (unsigned j = PTI.condition_idx; j < num_constraint_on_read; ++j) {
-                    if (containsReadRelated(after_syms, "", conditions[j])) {
-                      after_constraints.push_back(conditions[j]);
+                  int this_idx = findLastIn(PTI.cur_constraints,
+                                            constraint_to_use);
+                  for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
+                    if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
+                      after_constraints.push_back(constraint_to_use[j]);
                     }
                   }
                   if (!after_constraints.empty()) {

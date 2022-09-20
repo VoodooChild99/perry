@@ -250,7 +250,6 @@ public:
 
   PerryTrace pTrace;
   std::vector<ref<RegisterAccess>> regAccesses;
-  PerryTrace::Constraints conditions;
   uint64_t retVal;
 
   std::map<ref<Expr>, ref<PerryExpr>> fast_conversion_table;
