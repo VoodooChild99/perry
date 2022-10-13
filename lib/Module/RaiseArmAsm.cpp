@@ -58,12 +58,62 @@ static void gen_stub_strex(Module &M) {
 
   IRB.CreateStore(stub->getArg(1), stub->getArg(0));
   IRB.CreateRet(IRB.getInt32(0));
+} 
+
+static void gen_stub_msr(Module &M) {
+  // void msr(i32)
+  LLVMContext &MC = M.getContext();
+  FunctionCallee stub_callee = M.getOrInsertFunction(INSTR_FN_FREFIX(msr),
+        Type::getVoidTy(MC), Type::getInt32Ty(MC));
+
+  Function *stub = dyn_cast<Function>(stub_callee.getCallee());
+
+  IRBuilder<> IRB(stub->getContext());
+  IRBuilder<> IRBM(MC);
+  BasicBlock *bb = BasicBlock::Create(IRB.getContext(), "entry", stub);
+  IRB.SetInsertPoint(bb);
+  
+  auto PRIMASK = M.getNamedGlobal("PRIMASK");
+  if (!PRIMASK) {
+    M.getOrInsertGlobal("PRIMASK", IRBM.getInt32Ty());
+    PRIMASK = M.getNamedGlobal("PRIMASK");
+    PRIMASK->setLinkage(GlobalValue::CommonLinkage);
+    PRIMASK->setInitializer(ConstantInt::get(IRBM.getInt32Ty(), 0));
+  }
+  IRB.CreateStore(stub->getArg(0), PRIMASK);
+  IRB.CreateRetVoid();
+}
+
+static void gen_stub_mrs(Module &M) {
+  // i32 mrs()
+  LLVMContext &MC = M.getContext();
+  FunctionCallee stub_callee = M.getOrInsertFunction(INSTR_FN_FREFIX(mrs),
+        Type::getInt32Ty(MC));
+
+  Function *stub = dyn_cast<Function>(stub_callee.getCallee());
+
+  IRBuilder<> IRB(stub->getContext());
+  IRBuilder<> IRBM(MC);
+  BasicBlock *bb = BasicBlock::Create(IRB.getContext(), "entry", stub);
+  IRB.SetInsertPoint(bb);
+
+  auto PRIMASK = M.getNamedGlobal("PRIMASK");
+  if (!PRIMASK) {
+    M.getOrInsertGlobal("PRIMASK", IRBM.getInt32Ty());
+    PRIMASK = M.getNamedGlobal("PRIMASK");
+    PRIMASK->setLinkage(GlobalValue::CommonLinkage);
+    PRIMASK->setInitializer(ConstantInt::get(IRBM.getInt32Ty(), 0));
+  }
+  auto ret = IRB.CreateLoad(IRB.getInt32Ty(), PRIMASK);
+  IRB.CreateRet(ret);
 }
 
 #define ASM_HANDLE_LIST() \
   { \
     ASM_HANDLE_ENTRY(ldrex),  \
     ASM_HANDLE_ENTRY(strex),  \
+    ASM_HANDLE_ENTRY(msr),    \
+    ASM_HANDLE_ENTRY(mrs),    \
   }
 
 RaiseArmAsmPass::HandlerMapTy RaiseArmAsmPass::InitHandlerMap() {
@@ -73,7 +123,7 @@ RaiseArmAsmPass::HandlerMapTy RaiseArmAsmPass::InitHandlerMap() {
 
 RaiseArmAsmPass::IgnoreSetTy RaiseArmAsmPass::InitIgnoreSet() {
   IgnoreSetTy ret = {
-    "MRS", "MSR", "NOP", "nop", "wfi", "wfe", "dsb", "isb", "dmb", "sev"
+    "nop", "wfi", "wfe", "dsb", "isb", "dmb", "sev", "cpsid"
   };
   return ret;
 }
@@ -111,8 +161,18 @@ void RaiseArmAsmPass::handleAsmInsn(Module &M, Instruction &I,
   }
 
   // now it's an inlined asm for sure
-  std::string AS = IA->getAsmString();
-  std::string insn = AS.substr(0, AS.find_first_of(' '));
+  StringRef AS = IA->getAsmString();
+  std::string insn = AS.substr(0, AS.find_first_of(' ')).lower();
+
+  if (insn.empty()) {
+    std::string warn_msg;
+    raw_string_ostream OS(warn_msg);
+    OS << "Ignore empty inline asm: ";
+    CI->print(OS);
+    klee_warning("%s", warn_msg.c_str());
+    ignore.insert(CI);
+    return;
+  }
 
   if (ignoreSet.find(insn) != ignoreSet.end()) {
     ignore.insert(CI);
@@ -165,7 +225,16 @@ bool RaiseArmAsmPass::runOnModule(Module &M) {
   }
 
   for (auto ins : ignoredInsn) {
-    ins->eraseFromParent();
+    if (ins->user_empty()) {
+      // just remove this asm if no one uses the return value
+      ins->eraseFromParent();
+    } else {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      OS << "Cannot just remove instruction because it has users: ";
+      ins->print(OS);
+      klee_error("%s", err_msg.c_str());
+    }
   }
 
   if (savedInsn.empty() && ignoredInsn.empty()) {
