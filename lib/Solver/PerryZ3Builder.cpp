@@ -665,6 +665,15 @@ ImplVisitLogicOperator(EXTRACT) {
   }
 }
 
+ImplVisitLogicOperator(ZERO_EXT) {
+  visitLogicBitLevel(
+    e.arg(0), result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  auto num_bits = e.get_sort().bv_size();
+  for (unsigned i = result.size(); i <num_bits; ++i) {
+    result.push_back(ctx.bool_val(false));
+  }
+}
+
 ImplVisitLogicOperator(BMUL) {
   assert(e.num_args() == 2);
   auto left = e.arg(0);
@@ -999,6 +1008,11 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
         }
         case Z3_OP_EXTRACT: {
           visitLogicEXTRACT(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_ZERO_EXT: {
+          visitLogicZERO_EXT(
             e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
           break;
         }
@@ -1498,7 +1512,7 @@ bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
     Z3_OP_AND, Z3_OP_OR, Z3_OP_XOR, Z3_OP_NOT,
     Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT,
     Z3_OP_BAND, Z3_OP_BOR, Z3_OP_BNOT,
-    Z3_OP_CONCAT, Z3_OP_EXTRACT,
+    Z3_OP_CONCAT, Z3_OP_EXTRACT, Z3_OP_ZERO_EXT,
     Z3_OP_BMUL, Z3_OP_BADD, Z3_OP_BSUB, Z3_OP_BUDIV, Z3_OP_BUDIV_I
   };
   z3::expr_vector WL(ctx);

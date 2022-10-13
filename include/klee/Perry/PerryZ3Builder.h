@@ -85,6 +85,7 @@ private:
   // bv segmentation
   DefVisitLogicOperator(CONCAT);
   DefVisitLogicOperator(EXTRACT);
+  DefVisitLogicOperator(ZERO_EXT);
   // bv arith
   DefVisitLogicOperator(BMUL);
   DefVisitLogicOperator(BADD);
