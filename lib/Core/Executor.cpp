@@ -1090,6 +1090,22 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
   return condition;
 }
 
+static bool shouldTerminatePath(const std::set<BasicBlock*> paths,
+                                BasicBlock *next) {
+  static const std::set<std::string> whitelist {
+    "memcpy", "memset", "memcmp"
+  };
+  // if the current function is in the whitelist, ignore
+  if (whitelist.find(next->getParent()->getName().str()) != whitelist.end()) {
+    return false;
+  }
+  // else, terminate the path if visited
+  if (paths.find(next) != paths.end()) {
+    return true;
+  }
+  return false;
+}
+
 Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
                                    bool isInternal, BranchType reason) {
   Solver::Validity res;
@@ -1191,8 +1207,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (res==Solver::True) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
-      if (paths->find(BI->getSuccessor(0)) != paths->end()) {
+      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(0))) {
         std::string MSG;
         raw_string_ostream OS(MSG);
         BI->print(OS);
@@ -1212,8 +1227,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
-      if (paths->find(BI->getSuccessor(1)) != paths->end()) {
+      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(1))) {
         std::string MSG;
         raw_string_ostream OS(MSG);
         BI->print(OS);
@@ -1233,8 +1247,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      std::set<BasicBlock*> *paths = &(current.stack.back().paths);
-      if (paths->find(BI->getSuccessor(0)) != paths->end()) {
+      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(0))) {
         // true branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -1244,7 +1257,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         // so we take the false branch
         addConstraint(current, Expr::createIsZero(condition));
         return StatePair(nullptr, &current);
-      } else if (paths->find(BI->getSuccessor(1)) != paths->end()) {
+      } else if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(1))) {
         // false branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -2479,7 +2492,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       // Iterate through all non-default cases and order them by expressions
       auto paths = state.stack.back().paths;
       for (auto i : si->cases()) {
-        if (paths.find(i.getCaseSuccessor()) != paths.end()) {
+        if (shouldTerminatePath(paths, i.getCaseSuccessor())) {
           // we've executed this block before, skip
           klee_message("Prune visited branches in switch.");
           continue;
