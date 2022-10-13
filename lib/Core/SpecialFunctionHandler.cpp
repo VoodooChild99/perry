@@ -153,6 +153,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_get_taint_number", handleGetTaintNum, true),
   add("klee_get_taint_internal", handleGetTaintInternal, false),
   add("klee_get_return_value", handleGetReturnValue, false),
+  add("__assert_func", handleAssertFunc, false),
 
 #undef addDNR
 #undef add
@@ -350,6 +351,19 @@ void SpecialFunctionHandler::handleAssert(ExecutionState &state,
   assert(arguments.size() == 3 && "invalid number of arguments to _assert");
   executor.terminateStateOnError(
       state, "ASSERTION FAIL: " + readStringAtAddress(state, arguments[0]),
+      StateTerminationType::Assert);
+}
+
+void SpecialFunctionHandler::
+handleAssertFunc(ExecutionState &state, KInstruction *target,
+                 std::vector<ref<Expr>> &arguments) {
+  assert(arguments.size() == 4 && "invalid number of arguments to __assert_func");
+  ref<Expr> val = arguments[1];
+  klee::ConstantExpr  *CE_val = dyn_cast<ConstantExpr>(val);
+  assert(CE_val);
+  executor.terminateStateOnError(
+      state, "ASSERTION FAIL: " + readStringAtAddress(state, arguments[0])
+                                + ":" +std::to_string(CE_val->getZExtValue()),
       StateTerminationType::Assert);
 }
 

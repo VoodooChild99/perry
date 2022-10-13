@@ -158,6 +158,7 @@ namespace klee {
     HANDLER(handleGetTaint);
     HANDLER(handleGetTaintInternal);
     HANDLER(handleGetReturnValue);
+    HANDLER(handleAssertFunc);
 #undef HANDLER
   };
 } // End klee namespace
