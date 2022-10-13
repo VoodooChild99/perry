@@ -162,76 +162,76 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
   }
   std::set<std::string> includeFuncSet;
 
-  if (enableAutomaticAnalysis) {
-    for (auto &F : M) {
-      if (F.isDeclaration()) {
-        continue;
-      }
+  for (auto &F : M) {
+    if (F.isDeclaration()) {
+      continue;
+    }
 
-      CallGraphNode *CGN = CG[&F];
-      for (auto &SF : *CGN) {
-        calledFuncs.insert(SF.second->getFunction());
-      }
+    CallGraphNode *CGN = CG[&F];
+    for (auto &SF : *CGN) {
+      calledFuncs.insert(SF.second->getFunction());
+    }
 
-      for (auto &B : F) {
-        for (auto &I : B) {
-          if (!isa<StoreInst>(&I)) {
-            continue;
-          }
+    for (auto &B : F) {
+      for (auto &I : B) {
+        if (!isa<StoreInst>(&I)) {
+          continue;
+        }
 
-          StoreInst *SI = cast<StoreInst>(&I);
-          Value *VO = SI->getValueOperand();
-          Type *VOT = VO->getType();
-          if (!VOT->isPointerTy() ||
-              !VOT->getPointerElementType()->isFunctionTy())
-          {
-            continue;
-          }
+        StoreInst *SI = cast<StoreInst>(&I);
+        Value *VO = SI->getValueOperand();
+        Type *VOT = VO->getType();
+        if (!VOT->isPointerTy() ||
+            !VOT->getPointerElementType()->isFunctionTy())
+        {
+          continue;
+        }
 
-          // should be a function pointer
-          std::set<Function*> PointedFunctions;
-          if (isa<Function>(VO)) {
-            // constant function pointer
-            PointedFunctions.insert(cast<Function>(VO));
-          } else {
-            // varadic function pointer, track possible values
-            trackFunctionPtr(VO, PointedFunctions);
-          }
+        // should be a function pointer
+        std::set<Function*> PointedFunctions;
+        if (isa<Function>(VO)) {
+          // constant function pointer
+          PointedFunctions.insert(cast<Function>(VO));
+        } else {
+          // varadic function pointer, track possible values
+          trackFunctionPtr(VO, PointedFunctions);
+        }
 
-          std::set<StructOffset> SetOffsets;
-          trackFunctionPtrPlaceholder(SI->getPointerOperand(), SetOffsets);
-          if (SetOffsets.empty()) {
-            std::string InsString;
-            raw_string_ostream OS(InsString);
-            I.print(OS);
-            OS << " at ";
-            I.getDebugLoc().print(OS);
-            klee_warning("Failed to track placeholders: %s", InsString.c_str());
-            continue;
-          }
+        std::set<StructOffset> SetOffsets;
+        trackFunctionPtrPlaceholder(SI->getPointerOperand(), SetOffsets);
+        if (SetOffsets.empty()) {
+          std::string InsString;
+          raw_string_ostream OS(InsString);
+          I.print(OS);
+          OS << " at ";
+          I.getDebugLoc().print(OS);
+          klee_warning("Failed to track placeholders: %s", InsString.c_str());
+          continue;
+        }
 
-          for (auto PF : PointedFunctions) {
-            FuncPtrs.insert(PF);
-          }
+        for (auto PF : PointedFunctions) {
+          FuncPtrs.insert(PF);
+        }
 
-          for (auto &SO : SetOffsets) {
-            if (PtrFunction.find(SO) != PtrFunction.end()) {
-              for (auto PF : PointedFunctions) {
-                PtrFunction[SO].insert(PF->getName().str());
-              }
-            } else {
-              std::set<std::string> tmp;
-              for (auto PF : PointedFunctions) {
-                tmp.insert(PF->getName().str());
-              }
-              PtrFunction.insert(std::make_pair(SO, tmp));
+        for (auto &SO : SetOffsets) {
+          if (PtrFunction.find(SO) != PtrFunction.end()) {
+            for (auto PF : PointedFunctions) {
+              PtrFunction[SO].insert(PF->getName().str());
             }
+          } else {
+            std::set<std::string> tmp;
+            for (auto PF : PointedFunctions) {
+              tmp.insert(PF->getName().str());
+            }
+            PtrFunction.insert(std::make_pair(SO, tmp));
           }
         }
       }
     }
-  } else {
-    if (includeFunctionList.empty()) {
+  }
+  
+  if (!enableAutomaticAnalysis || !doAutoAnalyzeApi) {
+    if (includeFunctionList.empty() && TopLevelFunction.empty()) {
       klee_error("must specify at least one top-level function when "
                  "automatic analysis is disabled");
     }
@@ -245,7 +245,7 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
       continue;
     }
 
-    if (enableAutomaticAnalysis) {
+    if (enableAutomaticAnalysis && doAutoAnalyzeApi) {
       if ((calledFuncs.find(&F) == calledFuncs.end() &&
           FuncPtrs.find(&F) == FuncPtrs.end() &&
           excludeFuncSet.find(F.getName().str()) == excludeFuncSet.end()) ||
@@ -260,76 +260,78 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
     }
   }
 
-  for (auto &FN : TopLevelFunction) {
-    auto TopF = M.getFunction(FN);
-    if (TopF->getReturnType()->isVoidTy()) {
-      continue;
-    }
-    auto SP = TopF->getSubprogram();
-    auto retType = SP->getType()->getTypeArray()[0];
-    auto middleType = retType;
-    bool hasEnumeration = true;
-    while (middleType->getTag() != dwarf::Tag::DW_TAG_enumeration_type &&
-           hasEnumeration)
-    {
-      switch (middleType->getMetadataID()) {
-        case Metadata::MetadataKind::DIDerivedTypeKind: {
-          auto DT = cast<DIDerivedType>(middleType);
-          middleType = DT->getBaseType();
-          break;
-        }
-        case Metadata::MetadataKind::DICompositeTypeKind: {
-          auto CT = cast<DICompositeType>(middleType);
-          middleType = CT->getBaseType();
-          break;
-        }
-        case Metadata::MetadataKind::DIBasicTypeKind: {
-          hasEnumeration = false;
-          break;
-        }
-        default: {
-          std::string MSG;
-          raw_string_ostream OS(MSG);
-          middleType->print(OS);
-          klee_warning_once("Unhandled DIType %s in %s", MSG.c_str(), FN.c_str());
-          hasEnumeration = false;
-          break;
-        }
+  if (doAutoAnalyzeEnum) {
+    for (auto &FN : TopLevelFunction) {
+      auto TopF = M.getFunction(FN);
+      if (TopF->getReturnType()->isVoidTy()) {
+        continue;
       }
-    }
-    if (!hasEnumeration) {
-      continue;
-    }
-    auto CT = cast<DICompositeType>(middleType);
-    if (!CT) {
-      continue;
-    }
-    std::set<uint64_t> OkValues;
-    for (auto Node : CT->getElements()) {
-      assert(isa<DIEnumerator>(Node));
-      auto DIE = cast<DIEnumerator>(Node);
-      auto EnumName = DIE->getName();
-      auto lowered = EnumName.lower();
-      // heuristics to determine whether a enumeration represents success
-      if (lowered.find("ok") != std::string::npos ||
-          lowered.find("success") != std::string::npos)
+      auto SP = TopF->getSubprogram();
+      auto retType = SP->getType()->getTypeArray()[0];
+      auto middleType = retType;
+      bool hasEnumeration = true;
+      while (middleType->getTag() != dwarf::Tag::DW_TAG_enumeration_type &&
+            hasEnumeration)
       {
-        OkValues.insert(DIE->getValue().getZExtValue());
+        switch (middleType->getMetadataID()) {
+          case Metadata::MetadataKind::DIDerivedTypeKind: {
+            auto DT = cast<DIDerivedType>(middleType);
+            middleType = DT->getBaseType();
+            break;
+          }
+          case Metadata::MetadataKind::DICompositeTypeKind: {
+            auto CT = cast<DICompositeType>(middleType);
+            middleType = CT->getBaseType();
+            break;
+          }
+          case Metadata::MetadataKind::DIBasicTypeKind: {
+            hasEnumeration = false;
+            break;
+          }
+          default: {
+            std::string MSG;
+            raw_string_ostream OS(MSG);
+            middleType->print(OS);
+            klee_warning_once("Unhandled DIType %s in %s", MSG.c_str(), FN.c_str());
+            hasEnumeration = false;
+            break;
+          }
+        }
       }
-    }
-    if (OkValues.empty()) {
-      klee_warning("Function \'%s\' returns an enum, but failed to guess "
-                   "OK values", FN.c_str());
-    } else {
-      std::string infoMsg;
-      raw_string_ostream IOS(infoMsg);
-      for (auto OV : OkValues) {
-        IOS << OV << ", ";
+      if (!hasEnumeration) {
+        continue;
       }
-      infoMsg = infoMsg.substr(0, infoMsg.size() - 2);
-      klee_message("Function \'%s\' returns an enum, inferred OK values: %s",
-                   FN.c_str(), infoMsg.c_str());
-      OkValuesMap[FN] = OkValues;
+      auto CT = cast<DICompositeType>(middleType);
+      if (!CT) {
+        continue;
+      }
+      std::set<uint64_t> OkValues;
+      for (auto Node : CT->getElements()) {
+        assert(isa<DIEnumerator>(Node));
+        auto DIE = cast<DIEnumerator>(Node);
+        auto EnumName = DIE->getName();
+        auto lowered = EnumName.lower();
+        // heuristics to determine whether a enumeration represents success
+        if (lowered.find("ok") != std::string::npos ||
+            lowered.find("success") != std::string::npos)
+        {
+          OkValues.insert(DIE->getValue().getZExtValue());
+        }
+      }
+      if (OkValues.empty()) {
+        klee_warning("Function \'%s\' returns an enum, but failed to guess "
+                    "OK values", FN.c_str());
+      } else {
+        std::string infoMsg;
+        raw_string_ostream IOS(infoMsg);
+        for (auto OV : OkValues) {
+          IOS << OV << ", ";
+        }
+        infoMsg = infoMsg.substr(0, infoMsg.size() - 2);
+        klee_message("Function \'%s\' returns an enum, inferred OK values: %s",
+                    FN.c_str(), infoMsg.c_str());
+        OkValuesMap[FN] = OkValues;
+      }
     }
   }
 

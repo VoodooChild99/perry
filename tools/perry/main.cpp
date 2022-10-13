@@ -47,6 +47,8 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Support/YAMLParser.h"
+#include "llvm/Support/YAMLTraits.h"
 
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Signals.h"
@@ -100,6 +102,14 @@ namespace {
   ARMCPUVersion("arm-cpu-version",
                 cl::init(""),
                 cl::desc("Specify ARM CPU version"));
+  cl::opt<std::string>
+  ApiFile("perry-api-file",
+          cl::init(""),
+          cl::desc("Specify the file containing collected HAL APIs"));
+  cl::opt<std::string>
+  SuccRetFile("perry-succ-ret-file",
+          cl::init(""),
+          cl::desc("Specify the file containing successful return values for APIs"));
 
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
@@ -1154,15 +1164,141 @@ linkWithUclibc(StringRef libDir, std::string opt_suffix,
                FortifyPath.c_str(), errorMsg.c_str());
 }
 
+struct PerryApiItem {
+  std::string FuncName;
+  PerryApiItem(const std::string &FuncName) : FuncName(FuncName) {}
+  PerryApiItem() = default;
+};
+
+struct PerryFuncRetItem {
+  std::string FuncName;
+  uint64_t SuccVal;
+  PerryFuncRetItem(const std::string &FuncName, uint64_t SuccVal)
+    : FuncName(FuncName), SuccVal(SuccVal) {}
+  PerryFuncRetItem() = default;
+};
+
+template<>
+struct llvm::yaml::MappingTraits<PerryApiItem> {
+  static void mapping(IO &io, PerryApiItem &item) {
+    io.mapRequired("api", item.FuncName);
+  }
+};
+
+template<>
+struct llvm::yaml::MappingTraits<PerryFuncRetItem> {
+  static void mapping(IO &io, PerryFuncRetItem &item) {
+    io.mapRequired("func", item.FuncName);
+    io.mapRequired("succ_val", item.SuccVal);
+  }
+};
+
+template<>
+struct llvm::yaml::SequenceTraits<std::vector<PerryFuncRetItem>> {
+  static size_t size(IO &io, std::vector<PerryFuncRetItem> &vec) {
+    return vec.size();
+  }
+
+  static PerryFuncRetItem &element(IO &io, std::vector<PerryFuncRetItem> &vec,
+                                   size_t index) {
+    if (index >= vec.size()) {
+      vec.resize(index + 1);
+    }
+    return vec[index];
+  }
+};
+
+template<>
+struct llvm::yaml::SequenceTraits<std::vector<PerryApiItem>> {
+  static size_t size(IO &io, std::vector<PerryApiItem> &vec) {
+    return vec.size();
+  }
+
+  static PerryApiItem &element(IO &io, std::vector<PerryApiItem> &vec,
+                               size_t index) {
+    if (index >= vec.size()) {
+      vec.resize(index + 1);
+    }
+    return vec[index];
+  }
+};
+
 static void 
 collectTopLevelFunctions(llvm::Module& MainModule,
                          std::set<std::string> &TopLevelFunctions,
                          std::map<StructOffset, std::set<std::string>> &PtrFunc,
                          std::map<std::string, std::set<uint64_t>> &OkValuesMap)
 {
+  // load api file
+  bool doAutoAnalyzeApi = false;
+  bool doAutoAnalyzeEnum = false;
+  if (ApiFile.empty()) {
+    klee_warning(
+      "API file is not given - fallback to built-in analysis on LLVM-IR");
+    doAutoAnalyzeApi = true;
+  } else {
+    auto Result = llvm::MemoryBuffer::getFile(ApiFile);
+    if (bool(Result)) {
+      std::vector<PerryApiItem> ReadItem;
+      llvm::yaml::Input yin(Result->get()->getMemBufferRef());
+      yin >> ReadItem;
+
+      if (bool(yin.error())) {
+        std::string err_msg;
+        raw_string_ostream OS(err_msg);
+        OS << "Failed to read data from " << ApiFile;
+        klee_error("%s", err_msg.c_str());
+      } else {
+        for (auto &RI : ReadItem) {
+          TopLevelFunctions.insert(RI.FuncName);
+        }
+      }
+    } else {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      OS << "Failed to open " << ApiFile 
+         << ": " << Result.getError().message();
+      klee_error("%s", err_msg.c_str());
+    }
+  }
+
+  // load succ ret file
+  if (SuccRetFile.empty()) {
+    klee_warning(
+      "Success ret file is not given - fallback to built-in analysis");
+    doAutoAnalyzeEnum = true;
+  } else {
+    auto Result = llvm::MemoryBuffer::getFile(SuccRetFile);
+    if (bool(Result)) {
+      std::vector<PerryFuncRetItem> ReadItem;
+      llvm::yaml::Input yin(Result->get()->getMemBufferRef());
+      yin >> ReadItem;
+
+      if (bool(yin.error())) {
+        std::string err_msg;
+        raw_string_ostream OS(err_msg);
+        OS << "Failed to read data from " << SuccRetFile;
+        klee_error("%s", err_msg.c_str());
+      } else {
+        for (auto &RI : ReadItem) {
+          OkValuesMap.insert(
+            std::make_pair(RI.FuncName,
+                             std::set<uint64_t>{RI.SuccVal}));
+        }
+      }
+    } else {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      OS << "Failed to open " << SuccRetFile 
+         << ": " << Result.getError().message();
+      klee_error("%s", err_msg.c_str());
+    }
+  }
+
   llvm::legacy::PassManager pm;
   // collect basic informations
-  pm.add(new PerryAnalysisPass(TopLevelFunctions, PtrFunc, OkValuesMap));
+  pm.add(new PerryAnalysisPass(TopLevelFunctions, PtrFunc, OkValuesMap,
+                               doAutoAnalyzeApi, doAutoAnalyzeEnum));
 
   pm.run(MainModule);
 }

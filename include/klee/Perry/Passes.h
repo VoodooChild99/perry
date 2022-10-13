@@ -39,15 +39,21 @@ public:
   PerryAnalysisPass(
     std::set<std::string> &_TopLevelFunction,
     std::map<StructOffset, std::set<std::string>> &_PtrFunction,
-    std::map<std::string, std::set<uint64_t>> &_OkValuesMap)
+    std::map<std::string, std::set<uint64_t>> &_OkValuesMap,
+    bool doAutoAnalyzeApi = false,
+    bool doAutoAnalyzeEnum = false)
     : llvm::ModulePass(ID),
       TopLevelFunction(_TopLevelFunction), PtrFunction(_PtrFunction),
-      OkValuesMap(_OkValuesMap) {}
+      OkValuesMap(_OkValuesMap),
+      doAutoAnalyzeApi(doAutoAnalyzeApi),
+      doAutoAnalyzeEnum(doAutoAnalyzeEnum) {}
   bool runOnModule(llvm::Module &M) override;
 private:
   std::set<std::string> &TopLevelFunction;
   std::map<StructOffset, std::set<std::string>> &PtrFunction;
   std::map<std::string, std::set<uint64_t>> &OkValuesMap;
+  bool doAutoAnalyzeApi;
+  bool doAutoAnalyzeEnum;
 };
 
 class CDGNode {
