@@ -29,11 +29,11 @@ namespace {
 }
 
 bool StructOffset::operator== (const StructOffset &a) const {
-  return (TypeName == a.TypeName && Offset == a.Offset);
+  return (Offset == a.Offset && TypeName == a.TypeName);
 }
 
 bool StructOffset::operator< (const StructOffset &a) const {
-  return (TypeName != a.TypeName || Offset < a.Offset);
+  return (Offset < a.Offset || TypeName.compare(a.TypeName) < 0);
 }
 
 StructOffset::StructOffset()
