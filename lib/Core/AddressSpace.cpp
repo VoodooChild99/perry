@@ -273,6 +273,11 @@ bool AddressSpace::resolve(ExecutionState &state, TimingSolver *solver,
         return true;
 
       bool mustBeTrue;
+      if (mo->address != 
+          bits64::truncateToNBits(mo->address,
+                                  Context::get().getPointerWidth())) {
+        return false;
+      }
       if (!solver->mustBeTrue(state.constraints,
                               UltExpr::create(p, mo->getBaseExpr()), mustBeTrue,
                               state.queryMetaData))
