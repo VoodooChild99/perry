@@ -4607,7 +4607,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
-            toConstant(state, offset, "write taint must be concrete")
+            toConstant(state, offset, "[fast path] write taint must be concrete")
               ->toMemory(&offset_concrete);
                 for (unsigned int i = 0; i < type / 8; ++i) {
                   wos->writeTaint(offset_concrete + i, *ts);
@@ -4626,7 +4626,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               TaintSet t = *ts;
               uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
-          toConstant(state, offset, "read taint must be concrete")
+          toConstant(state, offset, "[fast path] read taint must be concrete")
             ->toMemory(&offset_concrete);
               for (unsigned int i = 0; i < type / 8; ++i) {
                 TaintSet *rt = os->readTaint(offset_concrete + i);
@@ -4654,6 +4654,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
   // we are on an error path (no resolution, multiple resolution, one
   // resolution with out of bounds)
+  terminateStateEarly(state, "only allow fast path", StateTerminationType::EARLY);
+  return;
 
   address = optimizer.optimizeExpr(address, true);
   ResolutionList rl;  
@@ -4700,7 +4702,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
-            toConstant(*bound, offset, "write taint must be concrete")
+            toConstant(*bound, offset, "[slow path] write taint must be concrete")
               ->toMemory(&offset_concrete);
             for (unsigned int i = 0; i < bytes; ++i) {
                   wos->writeTaint(offset_concrete + i, *ts);
@@ -4717,7 +4719,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           TaintSet t = *ts;
           uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
-          toConstant(*bound, offset, "read taint must be concrete")
+          toConstant(*bound, offset, "[slow path] read taint must be concrete")
             ->toMemory(&offset_concrete);
           for (unsigned int i = 0; i < bytes; ++i) {
                 TaintSet *rt = os->readTaint(offset_concrete + i);
