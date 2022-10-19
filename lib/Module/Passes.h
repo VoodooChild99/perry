@@ -20,6 +20,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/Analysis/CallGraph.h"
 
 #include <set>
 #include <map>
@@ -241,6 +242,7 @@ public:
     llvm::ModulePass(ID), TopLevelFunctions(_TopLevelFunctions),
     FunctionToSymbolName(_FunctionToSymbolName), PtrFunction(_PtrFunction),
     OkValuesMap(_OkValuesMap) {}
+  ~FuncSymbolizePass();
   bool runOnModule(llvm::Module &M) override;
 private:
   // A tree-like data structure to hold the real value of each formal param
@@ -269,18 +271,26 @@ private:
   llvm::FunctionCallee AllocFixFC;
   std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;
   std::pair<llvm::Value*, int> fRetVal;
+  llvm::CallGraph *CG = nullptr;
   void symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
                        std::vector<ParamCell*> &results);
-  void makeSymbolic(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
+  void symbolizeParams(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
   void prepFunctionPtr(llvm::Module &M, llvm::Function *TargetF,
                        llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
   void setTaint(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
-  void issueCallToTarget(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
-                         std::vector<ParamCell*> &results);
+  void callTarget(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
+                  std::vector<ParamCell*> &results);
+  void fillParamas(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
   void collectTaint(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results,
                     const std::string &FName);
+  void symbolizeValue(llvm::IRBuilder<> &IRB, llvm::Value *Var,
+                      const std::string &Name, uint32_t Size);
+  bool createCellsFrom(llvm::IRBuilder<> &IRB, ParamCell *root);
+  void symbolizeFrom(llvm::IRBuilder<> &IRB, ParamCell *root);
+  void fillCellInner(llvm::IRBuilder<> &IRB, ParamCell *root);
+  
 };
 
 } // namespace klee

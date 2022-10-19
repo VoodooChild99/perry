@@ -78,6 +78,25 @@ FuncSymbolizePass::ParamCell::~ParamCell() {
 }
 
 void FuncSymbolizePass::
+symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
+               uint32_t Size) {
+  Value *addr;
+  Type *varType = Var->getType();
+  if (varType->isIntegerTy()) {
+    addr = IRB.CreateIntToPtr(Var, IRB.getInt8PtrTy());
+  } else {
+    assert(varType->isPointerTy());
+    addr = IRB.CreatePointerCast(Var, IRB.getInt8PtrTy());
+  }
+  Value *varName = ConstantDataArray::getString(IRB.getContext(), Name);
+  Value *ptrVarName = IRB.CreateAlloca(varName->getType());
+  IRB.CreateStore(varName, ptrVarName);
+  ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
+  auto varSize = IRB.getInt32(Size);
+  IRB.CreateCall(MakeSymbolicFC, {addr, varSize, ptrVarName});
+}
+
+void FuncSymbolizePass::
 symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
   int gIdx = 0;
   for (auto &G : M.globals()) {
@@ -85,24 +104,51 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
       continue;
     }
     auto valueType = G.getValueType();
-    if (valueType->isIntegerTy()) {
-      // symbolize it
-      std::string symbolName = "g" + std::to_string(gIdx);
-      gIdx += 1;
-      Value *addr = IRB.CreatePointerCast(&G, IRB.getInt8PtrTy());
-      Value* varName 
-        = ConstantDataArray::getString(IRB.getContext(), symbolName);
-      Value *ptrVarName = IRB.CreateAlloca(varName->getType());
-      IRB.CreateStore(varName, ptrVarName);
-      ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
-      auto varSize = IRB.getInt32(DL->getTypeAllocSize(valueType));
-      IRB.CreateCall(MakeSymbolicFC, {addr, varSize, ptrVarName});
-    } else {
-      std::string err_msg;
-      raw_string_ostream OS(err_msg);
-      OS << "Unsupported value type when symbolizing globals: ";
-      valueType->print(OS);
-      klee_error("%s", err_msg.c_str());
+    switch (valueType->getTypeID()) {
+      case Type::TypeID::IntegerTyID: {
+        // symbolize it
+        std::string symbolName = "g" + std::to_string(gIdx);
+        gIdx += 1;
+        symbolizeValue(IRB, &G, symbolName, DL->getTypeAllocSize(valueType));
+        break;
+      }
+      case Type::TypeID::StructTyID: {
+        // symbolize it first
+        std::string symbolName = "g" + std::to_string(gIdx);
+        gIdx += 1;
+        symbolizeValue(IRB, &G, symbolName, DL->getTypeAllocSize(valueType));
+        // deal with members
+        ParamCell ParentCell;
+        ParentCell.ParamType = valueType;
+        ParentCell.depth = 1;
+        ParentCell.val = &G;
+        unsigned num_elements = valueType->getStructNumElements();
+        for (unsigned i = 0; i < num_elements; ++i) {
+          Type *member_type = valueType->getStructElementType(i);
+          ParamCell *PC = new ParamCell();
+          PC->ParamType = member_type;
+          PC->idx = i;
+          PC->parent = &ParentCell;
+          if (createCellsFrom(IRB, PC)) {
+            ParentCell.child.push_back(PC);
+            // try symbolize it
+            symbolizeFrom(IRB, PC);
+          } else {
+            delete PC;
+          }
+        }
+        fillCellInner(IRB, &ParentCell);
+        break;
+      }
+      default: {
+        std::string err_msg;
+        raw_string_ostream OS(err_msg);
+        OS << "Unsupported value type when symbolizing globals: ";
+        valueType->print(OS);
+        OS << ", ignore";
+        klee_warning("%s", err_msg.c_str());
+        break;
+      }
     }
   }
 }
@@ -135,13 +181,7 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
       SymbolName = "p" + std::to_string(pIdx);
       ++pIdx;
     }
-    Value *addr = IRB.CreateIntToPtr(pAddr, IRB.getInt8PtrTy());
-    Value* varName 
-      = ConstantDataArray::getString(IRB.getContext(), SymbolName);
-    Value *ptrVarName = IRB.CreateAlloca(varName->getType());
-    IRB.CreateStore(varName, ptrVarName);
-    ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
-    IRB.CreateCall(MakeSymbolicFC, {addr, pSize, ptrVarName});
+    symbolizeValue(IRB, pAddr, SymbolName, PeriphSizeList[i]);
   }
     
   // create the target peripheral
@@ -183,14 +223,7 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
       }
       IRB.CreateCall(AllocFixFC, {pLoc, IRB.getInt32(target_size)});
       // symbolize it
-      Value *addr = IRB.CreateIntToPtr(pLoc, IRB.getInt8PtrTy());
-      Value* varName 
-        = ConstantDataArray::getString(IRB.getContext(), "s0");
-      Value *ptrVarName = IRB.CreateAlloca(varName->getType());
-      IRB.CreateStore(varName, ptrVarName);
-      ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
-      Value *valSize = IRB.getInt32(target_size);
-      IRB.CreateCall(MakeSymbolicFC, {addr, valSize, ptrVarName});
+      symbolizeValue(IRB, pLoc, "s0", target_size);
     }
     // taint it
     int Taint = 0;
@@ -208,6 +241,9 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
       } else if (bits == 8) {
         CT = IRB.getInt8Ty();
       } else {
+        if (EDIT->getName().contains_insensitive("reserved")) {
+          continue;
+        }
         klee_error("unsupported type");
       }
       Value *TT = IRB.getInt32(Taint * 0x01000000);
@@ -225,21 +261,11 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
   }
 }
 
-void FuncSymbolizePass::createParamsFor(Function *TargetF, IRBuilder<> &IRB,
-                                        std::vector<ParamCell*> &results)
-{
-  results.clear();
-  size_t NumArgs = TargetF->arg_size();
-  for (size_t i = 0; i < NumArgs; ++i) {
-    ParamCell *PC = new ParamCell();
-    PC->ParamType = TargetF->getArg(i)->getType();
-    results.push_back(PC);
-  }
-
+bool FuncSymbolizePass::
+createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
   std::stack<ParamCell*> WorkStack;
-  for (size_t i = NumArgs; i > 0; --i) {
-    WorkStack.push(results[i - 1]);
-  }
+  WorkStack.push(root);
+  bool ret = true;
 
   while (!WorkStack.empty()) {
     ParamCell *PC = WorkStack.top();
@@ -298,16 +324,53 @@ void FuncSymbolizePass::createParamsFor(Function *TargetF, IRBuilder<> &IRB,
         WorkStack.push(PC);
         break;
       }
+      case Type::TypeID::ArrayTyID: {
+        if (!(PC->parent && PC->depth == 0)) {
+          klee_error("Symbolizing standalone arrays is not supported");
+        }
+        break;
+      }
+      case Type::TypeID::FunctionTyID: {
+        std::string err_msg;
+        raw_string_ostream OS(err_msg);
+        OS << "Function pointer will be null: ";
+        PC->ParamType->print(OS);
+        klee_warning("%s", err_msg.c_str());
+        break;
+      }
       default: {
         std::string ErrorMsg;
         raw_string_ostream OS(ErrorMsg);
-        OS << "Unhandled parameter type in function "
-           << TargetF->getName() << ": ";
+        OS << "Unhandled type when creating cells: ";
         PC->ParamType->print(OS);
-        klee_warning_once(TargetF, "%s", ErrorMsg.c_str());
-        delete PC;
+        klee_warning_once(ErrorMsg.c_str(), "%s", ErrorMsg.c_str());
+        // do not delete PC when it's root
+        if (PC == root) {
+          ret = false;
+        } else {
+          delete PC;
+        }
         break;
       }
+    }
+  }
+
+  return ret;
+}
+
+void FuncSymbolizePass::createParamsFor(Function *TargetF, IRBuilder<> &IRB,
+                                        std::vector<ParamCell*> &results)
+{
+  results.clear();
+  size_t NumArgs = TargetF->arg_size();
+  for (size_t i = 0; i < NumArgs; ++i) {
+    ParamCell *PC = new ParamCell();
+    PC->ParamType = TargetF->getArg(i)->getType();
+    if (createCellsFrom(IRB, PC)) {
+      results.push_back(PC);
+    } else {
+      delete PC;
+      results.push_back(nullptr);
     }
   }
 }
@@ -315,45 +378,55 @@ void FuncSymbolizePass::createParamsFor(Function *TargetF, IRBuilder<> &IRB,
 static int symidx = 1;
 // static std::string PeriphSymbolName = "";
 
-void FuncSymbolizePass::makeSymbolic(IRBuilder<> &IRB,
-                                     std::vector<ParamCell*> &results)
+void FuncSymbolizePass::symbolizeFrom(IRBuilder<> &IRB, ParamCell *root) {
+  if (!root) {
+    return;
+  }
+  std::stack<ParamCell*> WorkStack;
+  WorkStack.push(root);
+  while (!WorkStack.empty()) {
+    ParamCell *PC = WorkStack.top();
+    WorkStack.pop();
+    if (!PC) {
+      continue;
+    }
+    if (PC->val) {
+      if (PC->ParamType->isStructTy() &&
+          PC->ParamType->getStructName().equals(PeripheralPlaceholder)) {
+        continue;
+      }
+      std::string SymbolName = "s" + std::to_string(symidx);
+      ++symidx;
+      Value *addr = IRB.CreatePointerCast(PC->val, IRB.getInt8PtrTy());
+      Value* varName 
+        = ConstantDataArray::getString(IRB.getContext(), SymbolName);
+      Value *ptrVarName = IRB.CreateAlloca(varName->getType());
+      IRB.CreateStore(varName, ptrVarName);
+      ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
+      int allocSize = DL->getTypeAllocSize(PC->ParamType);
+      if (PC->isBuffer) {
+        allocSize *= HEURISTIC_BUFFER_LENGTH;
+        GuessedBuffers.push_back(std::make_pair(addr, allocSize));
+      }
+      Value *valSize = IRB.getInt32(allocSize);
+      IRB.CreateCall(MakeSymbolicFC, {addr, valSize, ptrVarName});
+    }
+    std::size_t NumChild = PC->child.size();
+    for (std::size_t i = NumChild; i > 0; --i) {
+      WorkStack.push(PC->child[i - 1]);
+    }
+  }
+}
+
+void FuncSymbolizePass::symbolizeParams(IRBuilder<> &IRB,
+                                        std::vector<ParamCell*> &results)
 {
   std::stack<ParamCell*> WorkStack;
   for (auto root : results) {
-    WorkStack.push(root);
-    while (!WorkStack.empty()) {
-      ParamCell *PC = WorkStack.top();
-      WorkStack.pop();
-      if (!PC) {
-        continue;
-      }
-      if (PC->val) {
-        if (PC->ParamType->isStructTy() &&
-            PC->ParamType->getStructName().equals(PeripheralPlaceholder))
-        {
-          continue;
-        }
-        std::string SymbolName = "s" + std::to_string(symidx);
-        ++symidx;
-        Value *addr = IRB.CreatePointerCast(PC->val, IRB.getInt8PtrTy());
-        Value* varName 
-          = ConstantDataArray::getString(IRB.getContext(), SymbolName);
-        Value *ptrVarName = IRB.CreateAlloca(varName->getType());
-        IRB.CreateStore(varName, ptrVarName);
-        ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
-        int allocSize = DL->getTypeAllocSize(PC->ParamType);
-        if (PC->isBuffer) {
-          allocSize *= HEURISTIC_BUFFER_LENGTH;
-          GuessedBuffers.push_back(std::make_pair(addr, allocSize));
-        }
-        Value *valSize = IRB.getInt32(allocSize);
-        IRB.CreateCall(MakeSymbolicFC, {addr, valSize, ptrVarName});
-      }
-      std::size_t NumChild = PC->child.size();
-      for (std::size_t i = NumChild; i > 0; --i) {
-        WorkStack.push(PC->child[i - 1]);
-      }
+    if (!root->val) {
+      continue;
     }
+    symbolizeFrom(IRB, root);
   }
 }
 
@@ -364,50 +437,76 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
   int selector_idx = 0;
   std::vector<std::pair<BasicBlock*, std::set<StructOffset>>> FptrUses;
   Value *Zero = IRB.getInt32(0);
-  for (auto &B : *TargetF) {
-    for (auto &I : B) {
-      if (!isa<CallInst>(&I)) {
-        continue;
+  // collect used function ptrs on all called functions
+  CallGraph &MCG = *CG;
+  std::set<Function*> calledFuncs;
+  std::vector<Function*> FWL;
+  FWL.push_back(TargetF);
+  while (!FWL.empty()) {
+    Function *cur_func = FWL.back();
+    FWL.pop_back();
+    if (cur_func->isDeclaration()) {
+      continue;
+    }
+    if (calledFuncs.find(cur_func) != calledFuncs.end()) {
+      continue;
+    }
+    calledFuncs.insert(cur_func);
+    CallGraphNode *CGN = MCG[cur_func];
+    for (auto &SF : *CGN) {
+      Function *next_func = SF.second->getFunction();
+      if (next_func) {
+        FWL.push_back(next_func);
       }
-      auto CI = cast<CallInst>(&I);
-      auto CO = CI->getCalledOperand();
-      if (isa<Function>(CO)) {
-        continue;
-      }
-      auto PI = CI->getPrevNonDebugInstruction();
-      std::set<StructOffset> PrevSet;
-      while (PI) {
-        if (!isa<StoreInst>(PI)) {
-          PI = PI->getPrevNonDebugInstruction();
-          continue;
-        }
-        auto SI = cast<StoreInst>(PI);
-        Value *VO = SI->getValueOperand();
-        Type *VOT = VO->getType();
-        if (!VOT->isPointerTy() ||
-            !VOT->getPointerElementType()->isFunctionTy())
-        {
-          PI = PI->getPrevNonDebugInstruction();
-          continue;
-        }
-        trackFunctionPtrPlaceholder(SI->getPointerOperand(), PrevSet);
-        PI = PI->getPrevNonDebugInstruction();
-      }
-      std::set<StructOffset> NowSet;
-      trackFunctionPtrPlaceholder(CO, NowSet);
-      // remove those having been set before
-      if (!PrevSet.empty()) {
-        for (auto it = NowSet.begin(); it != NowSet.end(); ) {
-          if (PrevSet.find(*it) != PrevSet.end()) {
-            it = NowSet.erase(it);
-          } else {
-            ++it;
-          }
-        }
-      }
-      FptrUses.push_back(std::make_pair(&B, std::move(NowSet)));
     }
   }
+  for (auto TF : calledFuncs) {
+    for (auto &B : *TF) {
+      for (auto &I : B) {
+        if (!isa<CallInst>(&I)) {
+          continue;
+        }
+        auto CI = cast<CallInst>(&I);
+        auto CO = CI->getCalledOperand();
+        if (isa<Function>(CO)) {
+          continue;
+        }
+        auto PI = CI->getPrevNonDebugInstruction();
+        std::set<StructOffset> PrevSet;
+        while (PI) {
+          if (!isa<StoreInst>(PI)) {
+            PI = PI->getPrevNonDebugInstruction();
+            continue;
+          }
+          auto SI = cast<StoreInst>(PI);
+          Value *VO = SI->getValueOperand();
+          Type *VOT = VO->getType();
+          if (!VOT->isPointerTy() ||
+              !VOT->getPointerElementType()->isFunctionTy())
+          {
+            PI = PI->getPrevNonDebugInstruction();
+            continue;
+          }
+          trackFunctionPtrPlaceholder(SI->getPointerOperand(), PrevSet);
+          PI = PI->getPrevNonDebugInstruction();
+        }
+        std::set<StructOffset> NowSet;
+        trackFunctionPtrPlaceholder(CO, NowSet);
+        // remove those having been set before
+        if (!PrevSet.empty()) {
+          for (auto it = NowSet.begin(); it != NowSet.end(); ) {
+            if (PrevSet.find(*it) != PrevSet.end()) {
+              it = NowSet.erase(it);
+            } else {
+              ++it;
+            }
+          }
+        }
+        FptrUses.push_back(std::make_pair(&B, std::move(NowSet)));
+      }
+    }
+  }
+
   std::set<StructOffset> SetOffsetsAll;
   std::deque<BasicBlock*> WL;
   for (auto &US : FptrUses) {
@@ -415,9 +514,14 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
       continue;
     }
     WL.push_back(US.first);
+    std::set<BasicBlock*> visited;
     while (!WL.empty()) {
       auto BB =  WL.front();
       WL.pop_front();
+      if (visited.find(BB) != visited.end()) {
+        continue;
+      }
+      visited.insert(BB);
       for (auto itb = BB->rbegin(); itb != BB->rend(); ++itb) {
         auto &I = *itb;
         if (!isa<StoreInst>(&I)) {
@@ -461,6 +565,7 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
   }
 
   for (auto &SO : SetOffsetsAll) {
+    bool isGlobal = (SO.TypeName.find("_perry_global_") != std::string::npos);
     std::vector<Constant*> possibleFuncs;
     if (PtrFunction.find(SO) == PtrFunction.end()) {
       continue;
@@ -478,85 +583,102 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
     // symbolize it
     std::string SymbolName = "f" + std::to_string(selector_idx);
     ++selector_idx;
-    Value *addr = IRB.CreatePointerCast(Selector, IRB.getInt8PtrTy());
-    Value* varName 
-      = ConstantDataArray::getString(IRB.getContext(), SymbolName);
-    Value *ptrVarName = IRB.CreateAlloca(varName->getType());
-    IRB.CreateStore(varName, ptrVarName);
-    ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
-    int allocSize = DL->getTypeAllocSize(IRB.getInt32Ty());
-    Value *valSize = IRB.getInt32(allocSize);
-    IRB.CreateCall(MakeSymbolicFC, {addr, valSize, ptrVarName});
+    symbolizeValue(IRB, Selector, SymbolName,
+                   DL->getTypeAllocSize(IRB.getInt32Ty()));
     // choose a value
     Selector = IRB.CreateLoad(IRB.getInt32Ty(), Selector);
     Selector = IRB.CreateURem(Selector, IRB.getInt32(possibleFuncs.size()));
     // store different values
-    bool okFlag = false;
-    std::stack<ParamCell*> WorkStack;
-    for (auto root : results) {
-      WorkStack.push(root);
-      while (!WorkStack.empty()) {
-        ParamCell *PC = WorkStack.top();
-        WorkStack.pop();
-        if (!PC) {
+    if (isGlobal) {
+      Value *PH = M.getNamedGlobal(SO.TypeName.substr(14));
+      auto DummyF = IRB.GetInsertBlock()->getParent();
+      auto DefaultBB = BasicBlock::Create(IRB.getContext(),
+                                          "default_branch", DummyF);
+      auto CSI = IRB.CreateSwitch(Selector, DefaultBB, possibleFuncs.size());
+      unsigned pf_idx = 0;
+      for (auto PF: possibleFuncs) {
+        std::string BranchName = "branch_" + std::to_string(pf_idx);
+        auto BranchBB = BasicBlock::Create(IRB.getContext(), BranchName,
+                                          DummyF, DefaultBB);
+        CSI->addCase(IRB.getInt32(pf_idx), BranchBB);
+        ++pf_idx;
+        IRB.SetInsertPoint(BranchBB);
+        IRB.CreateStore(PF, PH);
+        IRB.CreateBr(DefaultBB);
+      }
+      IRB.SetInsertPoint(DefaultBB);
+    } else {
+      bool okFlag = false;
+      std::stack<ParamCell*> WorkStack;
+      for (auto root : results) {
+        if (!root->val) {
           continue;
         }
-        if (PC->ParamType->isStructTy() && 
-            PC->ParamType->getStructName().equals(SO.TypeName))
-        {
-          Value *PH;
-          if (PC->val) {
-            PH = IRB.CreateGEP(PC->ParamType, PC->val,
-                                      {Zero, IRB.getInt32(SO.Offset)});
-          } else {
-            std::stack<ParamCell*> parents;
-            ParamCell *P = PC;
-            while (P->parent && !P->parent->val) {
-              P = P->parent;
-              parents.push(P);
-            }
-            assert(P->parent && P->parent->val);
-            ParamCell *Top = P->parent;
-            std::vector<Value*> IdxVec;
-            IdxVec.push_back(Zero);
-            while (!parents.empty()) {
-              P = parents.top();
-              parents.pop();
-              IdxVec.push_back(IRB.getInt32(P->idx));
-            }
-            IdxVec.push_back(IRB.getInt32(SO.Offset));
-            PH = IRB.CreateGEP(Top->ParamType, Top->val, IdxVec);
+        WorkStack.push(root);
+        while (!WorkStack.empty()) {
+          ParamCell *PC = WorkStack.top();
+          WorkStack.pop();
+          if (!PC) {
+            continue;
           }
-          auto DummyF = IRB.GetInsertBlock()->getParent();
-          auto DefaultBB = BasicBlock::Create(IRB.getContext(),
-                                              "default_branch", DummyF);
-          auto CSI = IRB.CreateSwitch(Selector, DefaultBB, possibleFuncs.size());
-          unsigned pf_idx = 0;
-          for (auto PF: possibleFuncs) {
-            std::string BranchName = "branch_" + std::to_string(pf_idx);
-            auto BranchBB = BasicBlock::Create(IRB.getContext(), BranchName,
-                                               DummyF, DefaultBB);
-            CSI->addCase(IRB.getInt32(pf_idx), BranchBB);
-            ++pf_idx;
-            IRB.SetInsertPoint(BranchBB);
-            IRB.CreateStore(PF, PH);
-            IRB.CreateBr(DefaultBB);
+          if (PC->ParamType->isStructTy() && 
+              PC->ParamType->getStructName().equals(SO.TypeName))
+          {
+            Value *PH;
+            if (PC->val) {
+              PH = IRB.CreateGEP(PC->ParamType, PC->val,
+                                        {Zero, IRB.getInt32(SO.Offset)});
+            } else {
+              std::stack<ParamCell*> parents;
+              ParamCell *P = PC;
+              while (P->parent && !P->parent->val) {
+                P = P->parent;
+                parents.push(P);
+              }
+              assert(P->parent && P->parent->val);
+              ParamCell *Top = P->parent;
+              std::vector<Value*> IdxVec;
+              IdxVec.push_back(Zero);
+              while (!parents.empty()) {
+                P = parents.top();
+                parents.pop();
+                IdxVec.push_back(IRB.getInt32(P->idx));
+              }
+              IdxVec.push_back(IRB.getInt32(PC->idx));
+              IdxVec.push_back(IRB.getInt32(SO.Offset));
+              PH = IRB.CreateGEP(Top->ParamType, Top->val, IdxVec);
+            }
+            auto DummyF = IRB.GetInsertBlock()->getParent();
+            auto DefaultBB = BasicBlock::Create(IRB.getContext(),
+                                                "default_branch", DummyF);
+            auto CSI = IRB.CreateSwitch(Selector, DefaultBB, possibleFuncs.size());
+            unsigned pf_idx = 0;
+            for (auto PF: possibleFuncs) {
+              std::string BranchName = "branch_" + std::to_string(pf_idx);
+              auto BranchBB = BasicBlock::Create(IRB.getContext(), BranchName,
+                                                DummyF, DefaultBB);
+              CSI->addCase(IRB.getInt32(pf_idx), BranchBB);
+              ++pf_idx;
+              IRB.SetInsertPoint(BranchBB);
+              IRB.CreateStore(PF, PH);
+              IRB.CreateBr(DefaultBB);
+            }
+            IRB.SetInsertPoint(DefaultBB);
+            okFlag = true;
+            break;
           }
-          IRB.SetInsertPoint(DefaultBB);
-          okFlag = true;
+          std::size_t NumChild = PC->child.size();
+          for (std::size_t i = NumChild; i > 0; --i) {
+            WorkStack.push(PC->child[i - 1]);
+          }
+        }
+        if (okFlag) {
           break;
         }
-        std::size_t NumChild = PC->child.size();
-        for (std::size_t i = NumChild; i > 0; --i) {
-          WorkStack.push(PC->child[i - 1]);
-        }
       }
-      if (okFlag) {
-        break;
+      if (!okFlag) {
+        klee_warning_once(0, "Failed to initialize function pointer");
       }
-    }
-    if (!okFlag) {
-      klee_warning_once(0, "Failed to initialize function pointer");
     }
   }
 }
@@ -631,41 +753,97 @@ void FuncSymbolizePass::setTaint(IRBuilder<> &IRB,
   }
 }
 
-void FuncSymbolizePass::issueCallToTarget(Function *TargetF, IRBuilder<> &IRB,
-                                          std::vector<ParamCell*> &results)
-{
-  // first prepare inner states
+void FuncSymbolizePass::
+fillCellInner(llvm::IRBuilder<> &IRB, ParamCell *root) {
+  if (!root->val) {
+    return;
+  }
   std::stack<ParamCell*> WorkStack;
   Constant *Zero = IRB.getInt32(0);
-  for (auto root : results) {
-    WorkStack.push(root);
-    while (!WorkStack.empty()) {
-      ParamCell *PC = WorkStack.top();
-      WorkStack.pop();
-      for (auto Child : PC->child) {
-        WorkStack.push(Child);
-        if (Child->val) {
-          assert(Child->depth > 0);
-          int tmp = Child->depth - 1;
-          Value *FinalValue = Child->val;
-          while (tmp > 0) {
-            Value *PtrToValue = IRB.CreateAlloca(FinalValue->getType());
-            IRB.CreateStore(FinalValue, PtrToValue);
-            FinalValue = PtrToValue;
-            --tmp;
-          }
-          Value *FinalValuePlaceholder
-            = IRB.CreateGEP(PC->ParamType, PC->val,
-                            {Zero, IRB.getInt32(Child->idx)});
-          IRB.CreateStore(FinalValue, FinalValuePlaceholder);
+  WorkStack.push(root);
+  while (!WorkStack.empty()) {
+    ParamCell *PC = WorkStack.top();
+    WorkStack.pop();
+    for (auto Child : PC->child) {
+      WorkStack.push(Child);
+      Value *FinalValue = nullptr;
+      if (Child->val) {
+        assert(Child->depth > 0);
+        int tmp = Child->depth - 1;
+        FinalValue = Child->val;
+        while (tmp > 0) {
+          Value *PtrToValue = IRB.CreateAlloca(FinalValue->getType());
+          IRB.CreateStore(FinalValue, PtrToValue);
+          FinalValue = PtrToValue;
+          --tmp;
+        }
+      } else {
+        if (Child->ParamType->isFunctionTy()) {
+          assert(Child->depth == 1);
+          FinalValue 
+            = ConstantPointerNull::get(Child->ParamType->getPointerTo());
         }
       }
+      if (!FinalValue) {
+        continue;
+      }
+      Value *FinalValuePlaceholder;
+      if (PC->val) {
+        FinalValuePlaceholder 
+          = IRB.CreateGEP(PC->ParamType, PC->val,
+                          {Zero, IRB.getInt32(Child->idx)});
+      } else {
+        // track backward
+        std::stack<ParamCell*> parents;
+        ParamCell *P = PC;
+        while (P->parent && !P->parent->val) {
+          P = P->parent;
+          parents.push(P);
+        }
+        assert(P->parent && P->parent->val);
+        ParamCell *Top = P->parent;
+        std::vector<Value*> IdxVec;
+        IdxVec.push_back(Zero);
+        while (!parents.empty()) {
+          P = parents.top();
+          parents.pop();
+          IdxVec.push_back(IRB.getInt32(P->idx));
+        }
+        IdxVec.push_back(IRB.getInt32(PC->idx));
+        IdxVec.push_back(IRB.getInt32(Child->idx));
+        FinalValuePlaceholder = IRB.CreateGEP(Top->ParamType, Top->val,
+                                              IdxVec);
+      }
+      IRB.CreateStore(FinalValue, FinalValuePlaceholder);
     }
   }
+}
+
+void FuncSymbolizePass::
+fillParamas(IRBuilder<> &IRB, std::vector<ParamCell*> &results) {
+  // first prepare inner states
+  std::stack<ParamCell*> WorkStack;
+  // Constant *Zero = IRB.getInt32(0);
+  for (auto root : results) {
+    if (!root->val) {
+      continue;
+    }
+    fillCellInner(IRB, root);
+  }
+}
+
+void FuncSymbolizePass::callTarget(Function *TargetF, IRBuilder<> &IRB,
+                                   std::vector<ParamCell*> &results)
+{
   // then outter states
   std::vector<Value*> RealParams;
   for (auto root : results) {
-    assert(root->val);
+    if (!root->val) {
+      assert(root->ParamType->isFunctionTy() && root->depth == 1);
+      RealParams.push_back(
+        ConstantPointerNull::get(root->ParamType->getPointerTo()));
+      continue;
+    }
     if (root->depth == 0) {
       RealParams.push_back(IRB.CreateLoad(root->ParamType, root->val));
     } else {
@@ -722,7 +900,6 @@ void FuncSymbolizePass::collectTaint(IRBuilder<> &IRB,
     auto RetType = IRB.getInt32Ty();
     IRB.CreateCall(GetRetValFC, {IRB.CreateLoad(RetType, Ptr)});
   }
-  GuessedBuffers.clear();
 }
 
 bool FuncSymbolizePass::runOnModule(Module &M) {
@@ -743,6 +920,10 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
 
   DL = &M.getDataLayout();
   ctx = &M.getContext();
+  if (CG) {
+    delete CG;
+  }
+  CG = new CallGraph(M);
 
   IRBuilder<> IRBM(*ctx);
 
@@ -792,7 +973,8 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     BasicBlock *bb = BasicBlock::Create(IRBF.getContext(), "entry", DummyF);
     IRBF.SetInsertPoint(bb);
     Function *TargetF = M.getFunction(TFName);
-    // generate
+    // let's go
+    symidx = 1;
     // symbolize all global variables
     symbolizeGlobals(IRBF, M);
     // prepare other peripherals used
@@ -800,22 +982,42 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     // create params for
     std::vector<ParamCell*> results;
     createParamsFor(TargetF, IRBF, results);
+    // fail early
+    bool fail_early = false;
+    for (auto root : results) {
+      if (!root) {
+        fail_early = true;
+        break;
+      }
+    }
+    if (fail_early) {
+      klee_warning("Failed to invoke %s", TFName.c_str());
+      IRBF.CreateRetVoid();
+      // DummyF->eraseFromParent();
+      // IRBF.ClearInsertionPoint();
+      for (auto root : results) {
+        if (root) {
+          delete root;
+        }
+      }
+      continue;
+    }
     // process results
-    symidx = 1;
     // PeriphSymbolName.clear();
-    // 1. make all allocated memory region symbolic
-    makeSymbolic(IRBF, results);
+    // make all allocated memory region in params symbolic
+    symbolizeParams(IRBF, results);
     FunctionToSymbolName->insert(std::make_pair(TFName, "s0"));
-    // klee_message("%s: Symbol Name of Registers is \'%s\'",
-    //              TFName.c_str(), PeriphSymbolName.c_str());
-    // 2. prepare function pointers if used
-    prepFunctionPtr(M, TargetF, IRBF, results);
-    // 3. (persistently) taint register regions
+    // taint buffers
     setTaint(IRBF, results);
-    // 4. call the target function
-    issueCallToTarget(TargetF, IRBF, results);
-    // 5. collect taint after symbolic execution
+    // fill in params
+    fillParamas(IRBF, results);
+    // prepare function pointers if used
+    prepFunctionPtr(M, TargetF, IRBF, results);
+    // call the target function & process the return value
+    callTarget(TargetF, IRBF, results);
+    // collect taint after symbolic execution
     collectTaint(IRBF, results, TFName);
+    GuessedBuffers.clear();
     // then return
     IRBF.CreateRetVoid();
     for (auto root : results) {
@@ -825,4 +1027,11 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
   }
 
   return changed;
+}
+
+FuncSymbolizePass::~FuncSymbolizePass() {
+  if (CG) {
+    delete CG;
+    CG = nullptr;
+  }
 }

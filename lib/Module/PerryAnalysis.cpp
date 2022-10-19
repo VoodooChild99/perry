@@ -92,6 +92,12 @@ void klee::trackFunctionPtrPlaceholder(Value *V, std::set<StructOffset> &S) {
           break;
         }
       }
+    } else if (isa<GlobalVariable>(SO.second)) {
+      GlobalVariable *GV = cast<GlobalVariable>(SO.second);
+      StructOffset NSO;
+      NSO.TypeName = "_perry_global_" + GV->getName().str();
+      NSO.Offset = 0;
+      S.insert(NSO);
     } else {
       // ignore
       std::string ValueString;
