@@ -1738,8 +1738,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       OkVals = &OkValuesMap.at(TopFunc);
     }
 
-    // all state
-    unsigned state_idx = 0;
     // for (auto &TR : Trace) {
     for (auto &rec : Record) {
       // single state
@@ -1748,7 +1746,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       auto returned_value = rec.return_value;
       auto &reg_accesses = rec.register_accesses;
       auto success_return = rec.success;
-      state_idx += 1;
       std::vector<ref<PerryExpr>> lastWriteConstraint;
       bool hasWrite = false;
       bool hasRead = false;
