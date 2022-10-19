@@ -33,7 +33,6 @@ autom4te.cache/
 
 .gdb_history
 .vscode
-.cache
 
 klee-run.sh
 
@@ -43,3 +42,4 @@ synthesizer/test
 
 profile
 klee-out-*
+.cache
