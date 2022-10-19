@@ -235,9 +235,9 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
       klee_error("must specify at least one top-level function when "
                  "automatic analysis is disabled");
     }
-    for (auto &iff : includeFunctionList) {
-      includeFuncSet.insert(iff);
-    }
+  }
+  for (auto &iff : includeFunctionList) {
+    includeFuncSet.insert(iff);
   }
 
   for (auto &F : M) {
