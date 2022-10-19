@@ -4449,16 +4449,17 @@ void Executor::resolveExact(ExecutionState &state,
   }
 }
 
-static void logRegOp(PerryExprManager &perryExprManager,
+static bool logRegOp(PerryExprManager &perryExprManager,
                      ExecutionState &state, const ObjectState *wos,
                      uint64_t offset_concrete, unsigned width,
                      const ref<Expr> &ExprInReg,
                      bool isWrite, TaintSet *ts = nullptr,  /* NULL if read */
                      Instruction *place = nullptr           /* NULL if write */)
 {
+  bool ret = false;
   if (LoadInst *SI = dyn_cast<LoadInst>(state.prevPC->inst)) {
     if (SI->user_empty()) {
-      return;
+      return false;
     }
   }
   TaintTy rts = wos->getPersistTaint(offset_concrete);
@@ -4490,6 +4491,7 @@ static void logRegOp(PerryExprManager &perryExprManager,
         // mark data register
         addTaint(state.taintedOutcomes, rts);
       }
+      ret = true;
     } else {
       state.pTrace.emplace_back(
         PerryTrace::PerryTraceItem(state.regAccesses.size(),
@@ -4500,6 +4502,7 @@ static void logRegOp(PerryExprManager &perryExprManager,
                               offset_concrete, width, ER, place));
     }
   }
+  return ret;
 }
 
 void Executor::executeMemoryOperation(ExecutionState &state,
@@ -4603,44 +4606,47 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             value = old_val;
           }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
-          wos->write(offset, value);
+          bool ignore_write = false;
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
             toConstant(state, offset, "[fast path] write taint must be concrete")
               ->toMemory(&offset_concrete);
-                for (unsigned int i = 0; i < type / 8; ++i) {
-                  wos->writeTaint(offset_concrete + i, *ts);
-                }
-            logRegOp(perryExprManager, state, wos, offset_concrete,
+            for (unsigned int i = 0; i < type / 8; ++i) {
+              wos->writeTaint(offset_concrete + i, *ts);
+            }
+            ignore_write = logRegOp(perryExprManager, state, wos, offset_concrete,
                          type, value, true, ts);
-              }
-              }
-          } else {
+          }
+          if (!ignore_write) {
+            wos->write(offset, value);
+          }
+        }
+      } else {
         ref<Expr> result = os->read(offset, type);
         
         if (interpreterOpts.MakeConcreteSymbolic)
           result = replaceReadWithSymbolic(state, result);
         
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
-              TaintSet t = *ts;
-              uint64_t offset_concrete = 0;
+          TaintSet t = *ts;
+          uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
           toConstant(state, offset, "[fast path] read taint must be concrete")
             ->toMemory(&offset_concrete);
-              for (unsigned int i = 0; i < type / 8; ++i) {
-                TaintSet *rt = os->readTaint(offset_concrete + i);
-                if (rt) {
-                  mergeTaint(t, *rt);
-                }
-              }
+          for (unsigned int i = 0; i < type / 8; ++i) {
+            TaintSet *rt = os->readTaint(offset_concrete + i);
+            if (rt) {
+              mergeTaint(t, *rt);
+            }
+          }
           logRegOp(perryExprManager, state, os, offset_concrete,
-                       type, result, false, nullptr, target->inst);
-              if (do_bitband) {
-                result = ZExtExpr::create(result, orig_type);
-              }
+                   type, result, false, nullptr, target->inst);
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, state, result, &t);
-            } else {
+        } else {
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
