@@ -576,7 +576,7 @@ void Executor::outputModuleManifest() {
 
 void Executor::leakUniversalKModule() {
   // The KModule is kept between runs
-  kmodule.release();
+  (void) kmodule.release();
 }
 
 TaintSet* Executor::collectLiveTaints() {
