@@ -283,6 +283,7 @@ public:
   void addSymbolic(const MemoryObject *mo, const Array *array);
 
   void addConstraint(ref<Expr> e);
+  void addConstraintDirect(ref<Expr> e);
   void addCexPreference(const ref<Expr> &cond);
 
   bool merge(const ExecutionState &b);

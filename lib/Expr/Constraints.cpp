@@ -70,6 +70,18 @@ public:
   }
 };
 
+class ReadWithSymIdxVisitor : public ExprVisitor {
+public:
+  explicit ReadWithSymIdxVisitor() : ExprVisitor(true) {}
+  Action visitRead(const ReadExpr &RE) override {
+    if (!isa<ConstantExpr>(RE.index)) {
+      has_sym_idx = true;
+    }
+    return Action::doChildren();
+  }
+  bool has_sym_idx = false;
+};
+
 bool ConstraintManager::rewriteConstraints(ExprVisitor &visitor) {
   ConstraintSet old;
   bool changed = false;
@@ -158,6 +170,38 @@ void ConstraintManager::addConstraintInternal(const ref<Expr> &e) {
 void ConstraintManager::addConstraint(const ref<Expr> &e) {
   ref<Expr> simplified = simplifyExpr(constraints, e);
   addConstraintInternal(simplified);
+}
+
+void ConstraintManager::
+addConstraintDirectInternal(const ref<Expr> &e) {
+  switch (e->getKind()) {
+  case Expr::Constant:
+    assert(cast<ConstantExpr>(e)->isTrue() &&
+           "attempt to add invalid (false) constraint");
+    break;
+
+    // split to enable finer grained independence and other optimizations
+  case Expr::And: {
+    BinaryExpr *be = cast<BinaryExpr>(e);
+    addConstraintDirectInternal(be->left);
+    addConstraintDirectInternal(be->right);
+    break;
+  }
+
+  default:
+    constraints.push_back(e);
+    break;
+  }
+}
+
+void ConstraintManager::addConstraintDirect(const ref<Expr> &e) {
+  ReadWithSymIdxVisitor v;
+  v.visit(e);
+  if (v.has_sym_idx) {
+    addConstraint(e);
+  } else {
+    addConstraintDirectInternal(e);
+  }
 }
 
 ConstraintManager::ConstraintManager(ConstraintSet &_constraints)

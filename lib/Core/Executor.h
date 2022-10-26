@@ -361,6 +361,7 @@ private:
   /// which also manages propagation of implied values,
   /// validity checks, and seed patching.
   void addConstraint(ExecutionState &state, ref<Expr> condition);
+  void addConstraintDirect(ExecutionState &state, ref<Expr> condition);
 
   // Called on [for now] concrete reads, replaces constant with a symbolic
   // Used for testing.

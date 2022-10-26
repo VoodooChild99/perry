@@ -1319,7 +1319,9 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         current.pathOS << "1";
       }
     }
-
+    if (reg_related) {
+      addConstraintDirect(current, condition);
+    }
     return StatePair(&current, nullptr);
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
@@ -1339,7 +1341,9 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         current.pathOS << "0";
       }
     }
-
+    if (reg_related) {
+      addConstraintDirect(current, Expr::createIsZero(condition));
+    }
     return StatePair(nullptr, &current);
   } else {
     if (isa<BranchInst>(current.prevPC->inst)) {
@@ -1490,6 +1494,16 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
   if (ivcEnabled)
     doImpliedValueConcretization(state, condition, 
                                  ConstantExpr::alloc(1, Expr::Bool));
+}
+
+void Executor::
+addConstraintDirect(ExecutionState &state, ref<Expr> condition) {
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(condition)) {
+    if (!CE->isTrue())
+      llvm::report_fatal_error("attempt to add invalid constraint");
+    return;
+  }
+  state.addConstraintDirect(condition);
 }
 
 const Cell& Executor::eval(KInstruction *ki, unsigned index, 

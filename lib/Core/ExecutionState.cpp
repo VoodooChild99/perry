@@ -383,6 +383,11 @@ void ExecutionState::addConstraint(ref<Expr> e) {
   c.addConstraint(e);
 }
 
+void ExecutionState::addConstraintDirect(ref<Expr> e) {
+  ConstraintManager c(constraints);
+  c.addConstraintDirect(e);
+}
+
 void ExecutionState::addCexPreference(const ref<Expr> &cond) {
   cexPreferences = cexPreferences.insert(cond);
 }
