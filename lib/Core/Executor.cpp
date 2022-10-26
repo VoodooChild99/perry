@@ -4589,14 +4589,8 @@ void Executor::resolveExact(ExecutionState &state,
   }
 }
 
-static bool logRegOp(PerryExprManager &perryExprManager,
-                     ExecutionState &state, const ObjectState *wos,
-                     uint64_t offset_concrete, unsigned width,
-                     const ref<Expr> &ExprInReg,
-                     bool isWrite, TaintSet *ts = nullptr,  /* NULL if read */
-                     Instruction *place = nullptr           /* NULL if write */)
-{
-  bool ret = false;
+static bool isRegOp(ExecutionState &state, const ObjectState *wos,
+                    uint64_t offset_concrete) {
   if (LoadInst *SI = dyn_cast<LoadInst>(state.prevPC->inst)) {
     if (SI->user_empty()) {
       return false;
@@ -4604,6 +4598,19 @@ static bool logRegOp(PerryExprManager &perryExprManager,
   }
   TaintTy rts = wos->getPersistTaint(offset_concrete);
   if (rts != ObjectState::NO_PERSIST_TAINT) {
+    return true;
+  }
+  return false;
+}
+
+static void logRegOp(PerryExprManager &perryExprManager,
+                     ExecutionState &state, const ObjectState *wos,
+                     uint64_t offset_concrete, unsigned width,
+                     const ref<Expr> &ExprInReg,
+                     bool isWrite, TaintSet *ts = nullptr,  /* NULL if read */
+                     Instruction *place = nullptr           /* NULL if write */)
+{
+  TaintTy rts = wos->getPersistTaint(offset_concrete);
   rts |= wos->getTaintReadCtx(offset_concrete);
 
   ref<PerryExpr> ER = state.getPerryExpr(perryExprManager, ExprInReg);
@@ -4631,7 +4638,6 @@ static bool logRegOp(PerryExprManager &perryExprManager,
       // mark data register
       addTaint(state.taintedOutcomes, rts);
     }
-      ret = true;
   } else {
     state.pTrace.emplace_back(
       PerryTrace::PerryTraceItem(state.regAccesses.size(),
@@ -4641,8 +4647,6 @@ static bool logRegOp(PerryExprManager &perryExprManager,
                             wos->getUpdatesPublic().root->getName(),
                             offset_concrete, width, ER, place));
   }
-  }
-  return ret;
 }
 
 void Executor::executeMemoryOperation(ExecutionState &state,
@@ -4746,7 +4750,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             value = old_val;
           }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
-          bool ignore_write = false;
+          // bool is_reg_write = false;
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
@@ -4755,12 +4759,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             for (unsigned int i = 0; i < type / 8; ++i) {
               wos->writeTaint(offset_concrete + i, *ts);
             }
-            ignore_write = logRegOp(perryExprManager, state, wos, offset_concrete,
+            bool is_reg_write = isRegOp(state, wos, offset_concrete);
+            if (is_reg_write) {
+              logRegOp(perryExprManager, state, wos, offset_concrete,
                        type, value, true, ts);
             }
-          if (!ignore_write) {
-          wos->write(offset, value);
           }
+          wos->write(offset, value);
+          // if (!is_reg_write) {
+          //   wos->write(offset, value);
+          // }
         }
       } else {
         ref<Expr> result = os->read(offset, type);
@@ -4780,8 +4788,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               mergeTaint(t, *rt);
             }
           }
+          if (isRegOp(state, os, offset_concrete)) {
             logRegOp(perryExprManager, state, os, offset_concrete,
                      type, result, false, nullptr, target->inst);
+          }
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
