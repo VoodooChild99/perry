@@ -48,8 +48,12 @@ def main(args):
   
   if args.config_file:
     s = Synthesizer(args.config_file, args.output_dir)
-    s.run()
-    s.dump()
+    try:
+      s.run()
+      s.dump()
+    except KeyboardInterrupt:
+      print("[*] Interrupted by user, dumping current result...")
+      s.dump()
 
 def __to_absolute_path(path: str) -> str:
   p = Path(path)
