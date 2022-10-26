@@ -7,6 +7,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/LoopInfo.h"
 
 #include <vector>
 #include <set>
@@ -138,6 +139,18 @@ private:
   NodeSet &nodeSet;
   NodeMap &nodeMap;
   llvm::PostDominatorTree *PDT;
+};
+
+class CollectLoopExitingPass : public llvm::ModulePass {
+public:
+  static char ID;
+  CollectLoopExitingPass(std::set<llvm::BasicBlock*> &M)
+    : llvm::ModulePass(ID), loopExitingBlocks(M) {}
+  bool runOnModule(llvm::Module &M) override;
+  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
+private:
+  std::set<llvm::BasicBlock*> &loopExitingBlocks;
+  void handleLoop(llvm::Loop *L);
 };
 
 }

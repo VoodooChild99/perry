@@ -1322,6 +1322,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
+                      const std::set<llvm::BasicBlock *> &loopExitingBlocks,
                       bool do_bind);
 
 static int workerPID;
@@ -1700,6 +1701,155 @@ static int findLastIn(const PerryTrace::Constraints &of,
 }
 
 static void
+inferWRDependence(const PerryTrace::PerryTraceItem &PTI,
+                  const PerryTrace::PerryTraceItem &last_PTI,
+                  const std::vector<ref<RegisterAccess>> &reg_accesses,
+                  const std::vector<ref<PerryExpr>> &constraint_to_use,
+                  const PerryTrace &trace, int i,
+                  PerryDependentMap &wrDepMap) {
+  auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+  auto &cur_access = reg_accesses[PTI.reg_access_idx];
+  unsigned num_cs = PTI.cur_constraints.size();
+  unsigned num_constraint_on_read
+    = constraint_to_use.size();
+  auto this_result = cur_access->ExprInReg;
+  std::set<SymRead> after_syms;
+  collectContainedSym(this_result, after_syms);
+  std::vector<ref<PerryExpr>> after_constraints;
+  int this_idx = findLastIn(PTI.cur_constraints,
+                            constraint_to_use);
+  for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
+    if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
+      after_constraints.push_back(constraint_to_use[j]);
+    }
+  }
+  if (!after_constraints.empty()) {
+    // collect constraints on the written expression till this read, if any
+    auto last_result = last_access->ExprInReg;
+    std::set<SymRead> before_syms;
+    collectContainedSym(last_result, before_syms);
+    std::vector<ref<PerryExpr>> before_constraints;
+    for (unsigned j = 0; j < num_cs; ++j) {
+      if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+        before_constraints.push_back(PTI.cur_constraints[j]);
+      }
+    }
+    DependentItemKey key(
+      SymRead(cur_access->name,
+              cur_access->offset,
+              cur_access->width),
+      this_result, after_constraints);
+    if (wrDepMap.find(key) == wrDepMap.end()) {
+      wrDepMap.insert(
+        std::make_pair(key, std::set<DependentItemVal>()));
+    }
+    // locate last write/read to this reg
+    SymRead written_reg = SymRead(last_access->name,
+                                  last_access->offset,
+                                  last_access->width);
+    ref<PerryExpr> before_expr = 0;
+    SymRead cur_reg(written_reg);
+    for (int j = i - 2; j >= 0; --j) {
+      auto &cur_PTI = trace[j];
+      auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+      cur_reg = SymRead(tmp_access->name,
+                        tmp_access->offset,
+                        tmp_access->width);
+      if (cur_reg.relatedWith(written_reg)) {
+        before_expr = tmp_access->ExprInReg;
+        break;
+      }
+    }
+    DependentItemVal val(
+      written_reg, before_expr, last_result, before_constraints);
+    if (before_expr) {
+      val.before_sym = cur_reg;
+    }
+    wrDepMap.at(key).insert(val);
+  }
+}
+
+static void
+inferRRDependence(const PerryTrace::PerryTraceItem &PTI,
+                  const PerryTrace::PerryTraceItem &last_PTI,
+                  const std::vector<ref<RegisterAccess>> &reg_accesses,
+                  const std::vector<ref<PerryExpr>> &final_constraints,
+                  const PerryTrace &trace, unsigned i,
+                  PerryDependentMap &rrDepMap) {
+  auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+  auto &cur_access = reg_accesses[PTI.reg_access_idx];
+  auto last_result = last_access->ExprInReg;
+  unsigned trace_size = trace.size();
+  unsigned num_cs = PTI.cur_constraints.size();
+  std::vector<ref<PerryExpr>> before_constraints,
+                              after_constraints;
+  std::set<SymRead> before_syms;
+  collectContainedSym(last_result, before_syms);
+  // look-before to find related constraints
+  int this_idx = findLastIn(last_PTI.cur_constraints,
+                            PTI.cur_constraints);
+  assert(this_idx != -1);
+  for (unsigned j = this_idx; j < num_cs; ++j) {
+    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+      before_constraints.push_back(PTI.cur_constraints[j]);
+    }
+  }
+  if (!before_constraints.empty()) {
+    // now we have a potential dependent pair
+    // look-after to find the constraint this read must meet to 
+    // successfully return
+    auto &constraint_to_use
+      = (i == trace_size - 1) ? final_constraints
+                              : trace[i + 1].cur_constraints;
+    unsigned num_constraint_on_read
+      = constraint_to_use.size();
+    auto this_result = cur_access->ExprInReg;
+    std::set<SymRead> after_syms;
+    collectContainedSym(this_result, after_syms);
+    this_idx = findLastIn(PTI.cur_constraints, constraint_to_use);
+    assert(this_idx != -1);
+    for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
+      if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
+        after_constraints.push_back(constraint_to_use[j]);
+      }
+    }
+    if (!after_constraints.empty()) {
+      DependentItemKey key(
+        SymRead(cur_access->name,
+                cur_access->offset,
+                cur_access->width),
+        this_result, after_constraints);
+      if (rrDepMap.find(key) == rrDepMap.end()) {
+        rrDepMap.insert(
+          std::make_pair(key, std::set<DependentItemVal>()));
+      }
+      ref<PerryExpr> before_expr = 0;
+      SymRead read_reg(last_access->name,
+                        last_access->offset,
+                        last_access->width);
+      SymRead cur_reg(read_reg);
+      for (int j = i - 2; j >= 0; --j) {
+        auto &cur_PTI = trace[j];
+        auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+        cur_reg = SymRead(tmp_access->name,
+                          tmp_access->offset,
+                          tmp_access->width);
+        if (cur_reg.relatedWith(read_reg)) {
+          before_expr = tmp_access->ExprInReg;
+          break;
+        }
+      }
+      DependentItemVal val(
+        read_reg, before_expr, last_result, before_constraints);
+      if (before_expr) {
+        val.before_sym = cur_reg;
+      }
+      rrDepMap.at(key).insert(val);
+    }
+  }
+}
+
+static void
 postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::string> &FunctionToSymbolName,
             const std::map<std::string, std::vector<PerryRecord>> &allRecords,
@@ -1746,6 +1896,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       auto returned_value = rec.return_value;
       auto &reg_accesses = rec.register_accesses;
       auto success_return = rec.success;
+      auto &checkpoints = rec.checkpoints;
       std::vector<ref<PerryExpr>> lastWriteConstraint;
       bool hasWrite = false;
       bool hasRead = false;
@@ -1818,13 +1969,12 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
       }
 
-      if (success_return  &&
-          OkVals          &&
-          OkVals->find(returned_value) != OkVals->end())
-      {
+      if (success_return && (
+          (OkVals && OkVals->find(returned_value) != OkVals->end()) ||
+          !OkVals)) {
         // normal exit
         // data register writes
-        if (hasWrite) {
+        if (hasWrite && !isIRQ) {
           std::vector<ref<PerryExpr>> finalCS;
           for (auto &CS : final_constraints) {
             if (containsReadTo(SymName, CS)) {
@@ -1851,7 +2001,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           unsigned trace_size = trace.size();
           for (unsigned i = 0; i < trace_size; ++i) {
             auto &PTI = trace[i];
-            unsigned num_cs = PTI.cur_constraints.size();
+            // unsigned num_cs = PTI.cur_constraints.size();
             auto &cur_access = reg_accesses[PTI.reg_access_idx];
 
             if (cur_access->AccessType == RegisterAccess::REG_READ) {
@@ -1868,139 +2018,36 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                 
                 if (inLoopCondition(cur_access->place) > 0 &&
                     depend_on_prev == 1 && 
-                    inNestedScope(last_access->place, cur_access->place)) 
-                {
-                  auto last_result = last_access->ExprInReg;
-                  std::vector<ref<PerryExpr>> before_constraints,
-                                              after_constraints;
-                  std::set<SymRead> before_syms;
-                  collectContainedSym(last_result, before_syms);
-                  // look-before to find related constraints
-                  int this_idx = findLastIn(last_PTI.cur_constraints,
-                                            PTI.cur_constraints);
-                  assert(this_idx != -1);
-                  for (unsigned j = this_idx; j < num_cs; ++j) {
-                    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
-                      before_constraints.push_back(PTI.cur_constraints[j]);
+                    inNestedScope(last_access->place, cur_access->place)) {
+                  bool blacklisted = false;
+                  for (auto &cp : checkpoints) {
+                    if (PTI.reg_access_idx == cp.regAccesses.size() - 1) {
+                      blacklisted = true;
+                      break;
                     }
                   }
-                  if (!before_constraints.empty()) {
-                    // now we have a potential dependent pair
-                    // look-after to find the constraint this read must meet to 
-                    // successfully return
-                    auto &constraint_to_use
-                      = (i == trace_size - 1) ? final_constraints
-                                              : trace[i + 1].cur_constraints;
-                    unsigned num_constraint_on_read
-                      = constraint_to_use.size();
-                    auto this_result = cur_access->ExprInReg;
-                    std::set<SymRead> after_syms;
-                    collectContainedSym(this_result, after_syms);
-                    this_idx = findLastIn(PTI.cur_constraints, constraint_to_use);
-                    assert(this_idx != -1);
-                    for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
-                      if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
-                        after_constraints.push_back(constraint_to_use[j]);
-                      }
-                    }
-                    if (!after_constraints.empty()) {
-                      DependentItemKey key(
-                        SymRead(cur_access->name,
-                                cur_access->offset,
-                                cur_access->width),
-                        this_result, after_constraints);
-                      if (rrDepMap.find(key) == rrDepMap.end()) {
-                        rrDepMap.insert(
-                          std::make_pair(key, std::set<DependentItemVal>()));
-                      }
-                      ref<PerryExpr> before_expr = 0;
-                      SymRead read_reg(last_access->name,
-                                       last_access->offset,
-                                       last_access->width);
-                      SymRead cur_reg(read_reg);
-                      for (int j = i - 2; j >= 0; --j) {
-                        auto &cur_PTI = trace[j];
-                        auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
-                        cur_reg = SymRead(tmp_access->name,
-                                          tmp_access->offset,
-                                          tmp_access->width);
-                        if (cur_reg.relatedWith(read_reg)) {
-                          before_expr = tmp_access->ExprInReg;
-                          break;
-                        }
-                      }
-                      DependentItemVal val(
-                        read_reg, before_expr, last_result, before_constraints);
-                      if (before_expr) {
-                        val.before_sym = cur_reg;
-                      }
-                      rrDepMap.at(key).insert(val);
-                    }
+                  if (!blacklisted) {
+                    inferRRDependence(PTI, last_PTI, reg_accesses,
+                                      final_constraints, trace, i, rrDepMap);
                   }
                 }
               } else if (!last_is_read && i > 0) {
                 if (inLoopCondition(cur_access->place) > 0) {
-                  auto &last_PTI = trace[i - 1];
-                  auto &last_access = reg_accesses[last_PTI.reg_access_idx];
-                  auto &constraint_to_use
-                    = (i == trace_size - 1) ? final_constraints
-                                            : trace[i + 1].cur_constraints;
-                  unsigned num_constraint_on_read
-                    = constraint_to_use.size();
-                  auto this_result = cur_access->ExprInReg;
-                  std::set<SymRead> after_syms;
-                  collectContainedSym(this_result, after_syms);
-                  std::vector<ref<PerryExpr>> after_constraints;
-                  int this_idx = findLastIn(PTI.cur_constraints,
-                                            constraint_to_use);
-                  for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
-                    if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
-                      after_constraints.push_back(constraint_to_use[j]);
+                  bool blacklisted = false;
+                  for (auto &cp : checkpoints) {
+                    if (PTI.reg_access_idx == cp.regAccesses.size() - 1) {
+                      blacklisted = true;
+                      break;
                     }
                   }
-                  if (!after_constraints.empty()) {
-                    // collect constraints on the written expression till this read, if any
-                    auto last_result = last_access->ExprInReg;
-                    std::set<SymRead> before_syms;
-                    collectContainedSym(last_result, before_syms);
-                    std::vector<ref<PerryExpr>> before_constraints;
-                    for (unsigned j = 0; j < num_cs; ++j) {
-                      if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
-                        before_constraints.push_back(PTI.cur_constraints[j]);
-                      }
-                    }
-                    DependentItemKey key(
-                      SymRead(cur_access->name,
-                              cur_access->offset,
-                              cur_access->width),
-                      this_result, after_constraints);
-                    if (wrDepMap.find(key) == wrDepMap.end()) {
-                      wrDepMap.insert(
-                        std::make_pair(key, std::set<DependentItemVal>()));
-                    }
-                    // locate last write/read to this reg
-                    SymRead written_reg = SymRead(last_access->name,
-                                                  last_access->offset,
-                                                  last_access->width);
-                    ref<PerryExpr> before_expr = 0;
-                    SymRead cur_reg(written_reg);
-                    for (int j = i - 2; j >= 0; --j) {
-                      auto &cur_PTI = trace[j];
-                      auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
-                      cur_reg = SymRead(tmp_access->name,
-                                        tmp_access->offset,
-                                        tmp_access->width);
-                      if (cur_reg.relatedWith(written_reg)) {
-                        before_expr = tmp_access->ExprInReg;
-                        break;
-                      }
-                    }
-                    DependentItemVal val(
-                      written_reg, before_expr, last_result, before_constraints);
-                    if (before_expr) {
-                      val.before_sym = cur_reg;
-                    }
-                    wrDepMap.at(key).insert(val);
+                  if (!blacklisted) {
+                    auto &last_PTI = trace[i - 1];
+                    // auto &last_access = reg_accesses[last_PTI.reg_access_idx];
+                    auto &constraint_to_use
+                      = (i == trace_size - 1) ? final_constraints
+                                              : trace[i + 1].cur_constraints;
+                    inferWRDependence(PTI, last_PTI, reg_accesses,
+                                      constraint_to_use, trace, i, wrDepMap);
                   }
                 }
               }
@@ -2009,6 +2056,70 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
               last_is_read = false;
             }
           }
+        }
+
+        // deal with checkpoints
+        for (auto &cp : checkpoints) {
+          unsigned reg_access_size = cp.regAccesses.size();
+          if (reg_access_size < 2) {
+            continue;
+          }
+          auto &cur_access = cp.regAccesses.back();
+          if (cur_access->AccessType != RegisterAccess::REG_READ) {
+            continue;
+          }
+          auto &last_access = cp.regAccesses[reg_access_size - 2];
+          if (last_access->AccessType != RegisterAccess::REG_WRITE) {
+            continue;
+          }
+          auto last_result = last_access->ExprInReg;
+          auto this_result = cur_access->ExprInReg;
+          std::vector<ref<PerryExpr>> after_constraints;
+          after_constraints.push_back(cp.condition);
+          std::set<SymRead> before_syms;
+          collectContainedSym(last_result, before_syms);
+          std::vector<ref<PerryExpr>> before_constraints;
+          auto &cs_to_use = cp.constraints;
+          unsigned num_cs = cs_to_use.size();
+          for (unsigned j = 0; j < num_cs; ++j) {
+            if (containsReadRelated(before_syms, "", cs_to_use[j])) {
+              before_constraints.push_back(cs_to_use[j]);
+            }
+          }
+          DependentItemKey key(
+            SymRead(cur_access->name,
+                    cur_access->offset,
+                    cur_access->width),
+            this_result, after_constraints);
+          if (wrDepMap.find(key) == wrDepMap.end()) {
+            wrDepMap.insert(
+              std::make_pair(key, std::set<DependentItemVal>()));
+          }
+          // locate last write/read to this reg
+          SymRead written_reg = SymRead(last_access->name,
+                                        last_access->offset,
+                                        last_access->width);
+          ref<PerryExpr> before_expr = 0;
+          SymRead cur_reg(written_reg);
+          if (reg_access_size > 2) {
+            for (int j = reg_access_size - 3; j >= 0; --j) {
+              auto &cur_PTI = cp.trace[j];
+              auto &tmp_access = cp.regAccesses[cur_PTI.reg_access_idx];
+              cur_reg = SymRead(tmp_access->name,
+                                tmp_access->offset,
+                                tmp_access->width);
+              if (cur_reg.relatedWith(written_reg)) {
+                before_expr = tmp_access->ExprInReg;
+                break;
+              }
+            }
+          }
+          DependentItemVal val(
+            written_reg, before_expr, last_result, before_constraints);
+          if (before_expr) {
+            val.before_sym = cur_reg;
+          }
+          wrDepMap.at(key).insert(val);
         }
       }
     }
@@ -2116,24 +2227,24 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           if (containsReadOnlyTO(val.after, val.sym)) {
             // if only the register itself is contained in the expr:
             // errs() << val << "...................................\n";
-            z3::expr_vector bit_level_expr_after(z3builder.getContext());
-            z3::expr_vector bit_level_expr_before(z3builder.getContext());
-            if (val.before) {
-              z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
-            }
-            z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
-            auto true_cs = z3builder.getContext().bool_val(true);
-            auto blacklist
-              = z3builder.inferBitLevelConstraintRaw(true_cs,
-                                                     val.before_sym,
-                                                     bit_level_expr_before);
-            
-            auto bit_constraints_after
-              = z3builder.inferBitLevelConstraintWithBlacklist(true_cs,
-                                                               val.sym,
-                                                               blacklist,
-                                                               bit_level_expr_after);
-            val_constraints.push_back(bit_constraints_after);
+          z3::expr_vector bit_level_expr_after(z3builder.getContext());
+          z3::expr_vector bit_level_expr_before(z3builder.getContext());
+          if (val.before) {
+            z3builder.getBitLevelExpr(val.before, bit_level_expr_before);
+          }
+          z3builder.getBitLevelExpr(val.after, bit_level_expr_after);
+          auto true_cs = z3builder.getContext().bool_val(true);
+          auto blacklist
+            = z3builder.inferBitLevelConstraintRaw(true_cs,
+                                                    val.before_sym,
+                                                    bit_level_expr_before);
+          
+          auto bit_constraints_after
+            = z3builder.inferBitLevelConstraintWithBlacklist(true_cs,
+                                                              val.sym,
+                                                              blacklist,
+                                                              bit_level_expr_after);
+          val_constraints.push_back(bit_constraints_after);
           } else {
             // else, ignore
             std::string tmp;
@@ -2539,6 +2650,8 @@ int main(int argc, char **argv) {
   ControlDependenceGraphPass::NodeSet ns;
   ControlDependenceGraphPass::NodeMap nm;
   kmodule->prepareCDG(TopLevelFunctions, ns, nm);
+  std::set<llvm::BasicBlock *> loopExitingBlocks;
+  kmodule->collectLoopExitingBlocks(loopExitingBlocks);
   externalsAndGlobalsCheck(kmodule->module.get());
 
   // maybe we only need to replay the path
@@ -2557,7 +2670,7 @@ int main(int argc, char **argv) {
   for (auto TopFunc : TopLevelFunctions) {
     records.clear();
     singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
-              liveTaint, records, PEM, do_bind);
+              liveTaint, records, PEM, loopExitingBlocks, do_bind);
     all_records[TopFunc] = std::move(records);
     do_bind = false;
   }
@@ -2651,11 +2764,13 @@ static void runKlee(std::vector<bool> &replayPath,
                     int fd,
                     std::vector<PerryRecord> &records,
                     PerryExprManager &PEM,
+                    const std::set<llvm::BasicBlock*> &loopExitingBlocks,
                     bool do_bind)
 {
   KleeHandler *handler = new KleeHandler(0, nullptr);
   Interpreter *interpreter =
-    theInterpreter = Interpreter::create(ctx, IOpts, handler, PEM);
+    theInterpreter
+      = Interpreter::create(ctx, IOpts, handler, PEM, loopExitingBlocks);
   assert(interpreter);
   handler->setInterpreter(interpreter);
 
@@ -2807,6 +2922,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
+                      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
                       bool do_bind)
 {
 
@@ -2846,12 +2962,12 @@ static void singlerun(std::vector<bool> &replayPath,
       }
       close(crpwfd[0]);
       runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts,
-              cwprfd[1], records, PEM, do_bind);
+              cwprfd[1], records, PEM, loopExitingBlocks, do_bind);
       exit(0);
     }
   } else {
     // no need to fork
     runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts, 0,
-            records, PEM, do_bind);
+            records, PEM, loopExitingBlocks, do_bind);
   }
 }

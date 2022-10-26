@@ -217,6 +217,7 @@ private:
 
   std::vector<PerryRecord> perryRecords;
   PerryExprManager &perryExprManager;
+  const std::set<llvm::BasicBlock*> &loopExitingBlocks;
   // std::vector<PerryTrace> RegAccessTrace;
   // std::vector<std::pair<bool, PerryTrace::Constraints>> finalConditions;
   // std::vector<uint64_t> returnValues;
@@ -348,7 +349,8 @@ private:
   /// not hold, respectively. One of the states is necessarily the
   /// current state, and one of the states may be null.
   StatePair fork(ExecutionState &current, ref<Expr> condition, bool isInternal,
-                 BranchType reason);
+                 BranchType reason,
+                 TaintSet *ts=nullptr, bool *force_branch=nullptr);
 
   // If the MaxStatic*Pct limits have been reached, concretize the condition and
   // return it. Otherwise, return the unmodified condition.
@@ -497,7 +499,8 @@ private:
 
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
-      InterpreterHandler *ie, PerryExprManager &_perryExprManager);
+      InterpreterHandler *ie, PerryExprManager &_perryExprManager,
+      const std::set<llvm::BasicBlock*> &loopExitingBlocks);
   virtual ~Executor();
 
   const InterpreterHandler& getHandler() {
@@ -576,6 +579,7 @@ public:
 
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
+  bool canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP);
 };
   
 } // End klee namespace

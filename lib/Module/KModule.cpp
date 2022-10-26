@@ -378,6 +378,13 @@ void KModule::prepareCDG(const std::set<std::string> &_TopLevelFunctions,
   pm.run(*module);
 }
 
+void KModule::
+collectLoopExitingBlocks(std::set<BasicBlock *> &loopExitingBlocks) {
+  legacy::PassManager pm;
+  pm.add(new CollectLoopExitingPass(loopExitingBlocks));
+  pm.run(*module);
+}
+
 KConstant* KModule::getKConstant(const Constant *c) {
   auto it = constantMap.find(c);
   if (it != constantMap.end())

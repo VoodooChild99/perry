@@ -129,7 +129,8 @@ public:
   static Interpreter *create(llvm::LLVMContext &ctx,
                              const InterpreterOptions &_interpreterOpts,
                              InterpreterHandler *ih,
-                             PerryExprManager &_perryExprManager);
+                             PerryExprManager &_perryExprManager,
+      const std::set<llvm::BasicBlock*> &loopExitingBlocks);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final

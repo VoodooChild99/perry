@@ -162,6 +162,8 @@ namespace klee {
     void prepareCDG(const std::set<std::string> &_TopLevelFunctions,
                     ControlDependenceGraphPass::NodeSet &_nodeSet,
                     ControlDependenceGraphPass::NodeMap &_nodeMap);
+    void collectLoopExitingBlocks(
+      std::set<llvm::BasicBlock*> &loopExitingBlocks);
     
     /// Same as manifest(), but without output
     void manifestNoOutput();

@@ -134,21 +134,62 @@ private:
   TaintSet ts;
 };
 
+struct PerryCheckPoint {
+  PerryTrace trace;
+  std::vector<ref<RegisterAccess>> regAccesses;
+  ref<PerryExpr> condition;
+  PerryTrace::Constraints constraints;
+
+  PerryCheckPoint(const PerryTrace &pt,
+                  const std::vector<ref<RegisterAccess>> &ra,
+                  const ref<PerryExpr> &condition,
+                  const PerryTrace::Constraints &constraints)
+    : trace(pt), regAccesses(ra), condition(condition),
+      constraints(constraints) {}
+
+  PerryCheckPoint(const PerryCheckPoint &CP)
+    : trace(CP.trace), regAccesses(CP.regAccesses), condition(CP.condition),
+      constraints(CP.constraints) {}
+};
+
+struct PerryCheckPointInternal {
+  PerryTrace trace;
+  std::vector<ref<RegisterAccess>> regAccesses;
+  ref<Expr> condition;
+  ConstraintSet constraints;
+  llvm::Instruction *pc;
+
+  PerryCheckPointInternal(const PerryTrace &pt,
+                          const std::vector<ref<RegisterAccess>> &ra,
+                          const ref<Expr> &condition,
+                          const ConstraintSet &constraints,
+                          llvm::Instruction *pc)
+    : trace(pt), regAccesses(ra), condition(condition),
+      constraints(constraints), pc(pc) {}
+
+  PerryCheckPointInternal(const PerryCheckPointInternal &CP)
+    : trace(CP.trace), regAccesses(CP.regAccesses), condition(CP.condition),
+      constraints(CP.constraints), pc(CP.pc) {}
+};
+
 struct PerryRecord {
-  bool success;
-  uint64_t return_value;
+  bool success = false;
+  uint64_t return_value = 0xdeadbeef;
   PerryTrace::Constraints final_constraints;
   std::vector<ref<RegisterAccess>> register_accesses;
   PerryTrace trace;
+  std::vector<PerryCheckPoint> checkpoints;
   
   PerryRecord(bool _success, uint64_t _return_value,
               const PerryTrace::Constraints &_final_constraints,
               const std::vector<ref<RegisterAccess>> &_register_accesses,
-              const PerryTrace &_trace)
+              const PerryTrace &_trace,
+              const std::vector<PerryCheckPoint> &_checkpoints)
     : success(_success), return_value(_return_value),
       final_constraints(std::move(_final_constraints)),
       register_accesses(std::move(_register_accesses)),
-      trace(std::move(_trace)) {}
+      trace(std::move(_trace)),
+      checkpoints(std::move(_checkpoints)) {}
 };
 
 }

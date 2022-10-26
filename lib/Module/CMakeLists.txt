@@ -24,6 +24,7 @@ set(KLEE_MODULE_COMPONENT_SRCS
   FuncSymbolizer.cpp
   PerryAnalysis.cpp
   ControlDependenceGraphPass.cpp
+  CollectLoopExitingPass.cpp
 )
 
 klee_add_component(kleeModule

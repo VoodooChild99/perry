@@ -469,14 +469,16 @@ extern "C" unsigned dumpStates, dumpPTree;
 unsigned dumpStates = 0, dumpPTree = 0;
 
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
-                   InterpreterHandler *ih, PerryExprManager &_perryExprManager)
+                   InterpreterHandler *ih, PerryExprManager &_perryExprManager,
+                   const std::set<llvm::BasicBlock*> &loopExitingBlocks)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
       replayKTest(0), replayPath(0), usingSeeds(0),
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString),
-      perryExprManager(_perryExprManager) {
+      perryExprManager(_perryExprManager),
+      loopExitingBlocks(loopExitingBlocks) {
 
 
   const time::Span maxTime{MaxTime};
@@ -1090,24 +1092,79 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
   return condition;
 }
 
-static bool shouldTerminatePath(const std::set<BasicBlock*> paths,
-                                BasicBlock *next) {
-  static const std::set<std::string> whitelist {
-    "memcpy", "memset", "memcmp"
-  };
-  // if the current function is in the whitelist, ignore
-  if (whitelist.find(next->getParent()->getName().str()) != whitelist.end()) {
+bool Executor::
+canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
+  BasicBlock *B = state.prevPC->inst->getParent();
+  if (state.getVisitCnt(B) > ExecutionState::PERRY_PATH_TERMINATE_THRESHOLD) {
     return false;
   }
-  // else, terminate the path if visited
-  if (paths.find(next) != paths.end()) {
+  time::Span timeout = coreSolverTimeout;
+  Solver::Validity res;
+  ConstraintSet related_cs;
+  ref<Expr> &condition = CP.condition;
+  if (CP.pc->hasMetadata(LLVMContext::MD_dbg)) {
+    MDNode *the_node = CP.pc->getMetadata(LLVMContext::MD_dbg);
+    auto c_it = state.reg_constraints.find(the_node);
+    if (c_it != state.reg_constraints.end()) {
+      ConstraintSet c_set;
+      c_set.push_back(c_it->second);
+      solver->setTimeout(timeout);
+      bool success = solver->evaluate(c_set, condition, res,
+                                      state.queryMetaData);
+      solver->setTimeout(time::Span());
+      if (!success) {
+        klee_warning("Query time out when resolving conflicts");
+      } else {
+        if (res == Solver::True) {
+          return false;
+        }
+      }
+    }
+  }
+  for (auto &cs : CP.constraints) {
+    ConstraintSet c_set;
+    c_set.push_back(cs);
+    solver->setTimeout(timeout);
+    bool success = solver->evaluate(c_set, condition, res,
+                                    state.queryMetaData);
+    solver->setTimeout(time::Span());
+    if (!success) {
+      klee_warning("Query time out when resolving conflicts");
+      continue;
+    }
+    if (res != Solver::True) {
+      continue;
+    }
+    related_cs.push_back(cs);
+  }
+  if (related_cs.size() == 1) {
+    // now we have two `twin` conditions:
+    // a) the preposition condition (i.e., the one within `related_cs`), and
+    // b) the postposition condition `condition` (that is assured to be true by `a`)
+    // for `a`, everything is fine
+    // for `b`, it is not preserved in the path constraints (because it's always true),
+    // therefore, we store it somewhere else for later process.
+    // what we know about `b`:
+    // 1) it is a register-related loop condition
+    PerryTrace::Constraints perry_cs;
+    for (auto &cs : CP.constraints) {
+      perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
+    }
+    PerryCheckPoint neg(
+      CP.trace,
+      CP.regAccesses,
+      state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
+      perry_cs);
+    state.checkPoints.push_back(neg);
+    klee_warning_once(B, "resolve conflict sucess");
     return true;
   }
   return false;
 }
 
 Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
-                                   bool isInternal, BranchType reason) {
+                                   bool isInternal, BranchType reason,
+                                   TaintSet *ts, bool *force_branch) {
   Solver::Validity res;
   std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
     seedMap.find(&current);
@@ -1204,17 +1261,57 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   // the value it has been fixed at, we should take this as a nice
   // hint to just use the single constraint instead of all the binary
   // search ones. If that makes sense.
+  bool reg_related = false;
+  if (ts) {
+    for (auto tt : *ts) {
+      if (tt & 0x00ff0000) {
+        continue;
+      }
+      reg_related = true;
+      break;
+    }
+  }
   if (res==Solver::True) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(0))) {
-        std::string MSG;
-        raw_string_ostream OS(MSG);
-        BI->print(OS);
-        OS << ", at ";
-        BI->getDebugLoc().print(OS);
-        terminateStateEarly(current, "visited true state", StateTerminationType::EARLY);
-        return StatePair(nullptr, nullptr);
+      if (current.isExitingBlock(BI->getParent())) {
+        auto &checkpoints = current.stack.back().checkpoints;
+        if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(0))) {
+          if (reg_related) {
+            auto c_it = checkpoints.find(BI->getParent());
+            if (c_it != checkpoints.end()) {
+              if (canResolveConflict(current, c_it->second)) {
+                assert(force_branch);
+                *force_branch = true;
+                checkpoints.erase(BI->getParent());
+                return StatePair(&current, nullptr);
+              }
+            }
+          }
+          std::string MSG;
+          raw_string_ostream OS(MSG);
+          BI->print(OS);
+          OS << ", at ";
+          BI->getDebugLoc().print(OS);
+          terminateStateEarly(
+            current, "visited true state", StateTerminationType::EARLY);
+          return StatePair(nullptr, nullptr);
+        } else {
+          if (reg_related && !(condition->isTrue() || condition->isFalse())) {
+            auto c_it = checkpoints.find(BI->getParent());
+            if (c_it != checkpoints.end()) {
+              if (canResolveConflict(current, c_it->second)) {
+                assert(force_branch);
+                *force_branch = true;
+                checkpoints.erase(BI->getParent());
+                return StatePair(&current, nullptr);
+              }
+            }
+            PerryCheckPointInternal CP(current.pTrace, current.regAccesses,
+                                       condition, current.constraints, BI);
+            checkpoints.emplace(std::make_pair(BI->getParent(), std::move(CP)));
+          }
+        }
       }
     }
     if (!isInternal) {
@@ -1227,7 +1324,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(1))) {
+      if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(1))) {
         std::string MSG;
         raw_string_ostream OS(MSG);
         BI->print(OS);
@@ -1247,7 +1344,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(0))) {
+      if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(0))) {
         // true branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -1255,9 +1352,14 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
           }
         }
         // so we take the false branch
-        addConstraint(current, Expr::createIsZero(condition));
+        ref<Expr> false_condition = Expr::createIsZero(condition);
+        addConstraint(current, false_condition);
+        if (reg_related && BI->hasMetadata(LLVMContext::MD_dbg)) {
+          current.reg_constraints[BI->getMetadata(LLVMContext::MD_dbg)]
+            = false_condition; 
+        }
         return StatePair(nullptr, &current);
-      } else if (shouldTerminatePath(current.stack.back().paths, BI->getSuccessor(1))) {
+      } else if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(1))) {
         // false branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -1266,6 +1368,10 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         }
         // so we take the true branch
         addConstraint(current, condition);
+        if (reg_related && BI->hasMetadata(LLVMContext::MD_dbg)) {
+          current.reg_constraints[BI->getMetadata(LLVMContext::MD_dbg)]
+            = condition;
+        }
         return StatePair(&current, nullptr);
       }
     }
@@ -1341,6 +1447,12 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
       return StatePair(nullptr, nullptr);
     }
 
+    Instruction *cur_inst = current.prevPC->inst;
+    if (reg_related && cur_inst->hasMetadata(LLVMContext::MD_dbg)) {
+      MDNode *the_node = cur_inst->getMetadata(LLVMContext::MD_dbg);
+      trueState->reg_constraints[the_node] = condition;
+      falseState->reg_constraints[the_node] = Expr::createIsZero(condition);
+    }
     return StatePair(trueState, falseState);
   }
 }
@@ -2247,7 +2359,14 @@ Function* Executor::getTargetFunction(Value *calledVal, ExecutionState &state) {
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
-  state.stack.back().paths.insert(i->getParent());
+  if (i->isTerminator()) {
+    auto &paths = state.stack.back().paths;
+    if (paths.find(i->getParent()) != paths.end()) {
+      paths[i->getParent()] += 1;
+    } else {
+      paths.insert(std::make_pair(i->getParent(), 1));
+    }
+  }
   // i->print(outs());
   // if (i->hasMetadata(LLVMContext::MD_dbg)) {
   //   outs() << " at ";
@@ -2366,7 +2485,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       ref<Expr> cond = cell.value;
 
       cond = optimizer.optimizeExpr(cond, false);
-      Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch);
+      bool force_branch = false;
+      Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch, &cell.taint, &force_branch);
 
       // NOTE: There is a hidden dependency here, markBranchVisited
       // requires that we still be in the context of the branch
@@ -2382,10 +2502,22 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
         }
       }
 
-      if (branches.first)
-        transferToBasicBlock(bi->getSuccessor(0), bi->getParent(), *branches.first);
-      if (branches.second)
-        transferToBasicBlock(bi->getSuccessor(1), bi->getParent(), *branches.second);
+      if (branches.first) {
+        BasicBlock *true_target = bi->getSuccessor(0);
+        BasicBlock *cur_block = bi->getParent();
+        ExecutionState &cur_state = *branches.first;
+        if (force_branch) {
+          transferToBasicBlock(bi->getSuccessor(1), cur_block, cur_state);
+        } else {
+          transferToBasicBlock(true_target, cur_block, cur_state);
+        }
+      }
+      if (branches.second) {
+        BasicBlock *false_target = bi->getSuccessor(1);
+        ExecutionState &cur_state = *branches.second;
+        assert(!force_branch);
+        transferToBasicBlock(false_target, bi->getParent(), cur_state);
+      }
     }
     break;
   }
@@ -2490,13 +2622,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       std::map<ref<Expr>, BasicBlock *> expressionOrder;
 
       // Iterate through all non-default cases and order them by expressions
-      auto paths = state.stack.back().paths;
       for (auto i : si->cases()) {
-        if (shouldTerminatePath(paths, i.getCaseSuccessor())) {
-          // we've executed this block before, skip
-          klee_message("Prune visited branches in switch.");
-          continue;
-        }
         ref<Expr> value = evalConstant(i.getCaseValue());
 
         BasicBlock *caseSuccessor = i.getCaseSuccessor();
@@ -3899,7 +4025,7 @@ void Executor::terminateState(ExecutionState &state, bool isNormalExit) {
 
   perryRecords.emplace_back(PerryRecord(isNormalExit, state.retVal,
                                         finalConstraints, state.regAccesses,
-                                        state.pTrace));
+                                        state.pTrace, state.checkPoints));
 
   interpreterHandler->incPathsExplored();
 
@@ -4464,43 +4590,43 @@ static bool logRegOp(PerryExprManager &perryExprManager,
   }
   TaintTy rts = wos->getPersistTaint(offset_concrete);
   if (rts != ObjectState::NO_PERSIST_TAINT) {
-    rts |= wos->getTaintReadCtx(offset_concrete);
+  rts |= wos->getTaintReadCtx(offset_concrete);
 
-    ref<PerryExpr> ER = state.getPerryExpr(perryExprManager, ExprInReg);
-    std::vector<ref<PerryExpr>> cur_constraints;
-    for (auto &CE : state.constraints) {
-      cur_constraints.push_back(state.getPerryExpr(perryExprManager, CE));
+  ref<PerryExpr> ER = state.getPerryExpr(perryExprManager, ExprInReg);
+  std::vector<ref<PerryExpr>> cur_constraints;
+  for (auto &CE : state.constraints) {
+    cur_constraints.push_back(state.getPerryExpr(perryExprManager, CE));
+  }
+  if (isWrite) {
+    state.pTrace.emplace_back(
+      PerryTrace::PerryTraceItem(state.regAccesses.size(),
+                                  cur_constraints));
+    state.regAccesses.emplace_back(
+      RegisterAccess::alloc(rts, RegisterAccess::REG_WRITE,
+                            wos->getUpdatesPublic().root->getName(),
+                            offset_concrete, width, ER));
+    assert(ts != nullptr);
+    bool flag = false;
+    for (auto tt : *ts) {
+      if (tt & 0x00ff0000) {
+        flag = true;
+        break;
+      }
     }
-    if (isWrite) {
-      state.pTrace.emplace_back(
-        PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   cur_constraints));
-      state.regAccesses.emplace_back(
-        RegisterAccess::alloc(rts, RegisterAccess::REG_WRITE,
-                              wos->getUpdatesPublic().root->getName(),
-                              offset_concrete, width, ER));
-      assert(ts != nullptr);
-      bool flag = false;
-      for (auto tt : *ts) {
-        if (tt & 0x00ff0000) {
-          flag = true;
-          break;
-        }
-      }
-      if (flag) {
-        // mark data register
-        addTaint(state.taintedOutcomes, rts);
-      }
+    if (flag) {
+      // mark data register
+      addTaint(state.taintedOutcomes, rts);
+    }
       ret = true;
-    } else {
-      state.pTrace.emplace_back(
-        PerryTrace::PerryTraceItem(state.regAccesses.size(),
-                                   cur_constraints));
-      state.regAccesses.emplace_back(
-        RegisterAccess::alloc(rts, RegisterAccess::REG_READ,
-                              wos->getUpdatesPublic().root->getName(),
-                              offset_concrete, width, ER, place));
-    }
+  } else {
+    state.pTrace.emplace_back(
+      PerryTrace::PerryTraceItem(state.regAccesses.size(),
+                                  cur_constraints));
+    state.regAccesses.emplace_back(
+      RegisterAccess::alloc(rts, RegisterAccess::REG_READ,
+                            wos->getUpdatesPublic().root->getName(),
+                            offset_concrete, width, ER, place));
+  }
   }
   return ret;
 }
@@ -4616,10 +4742,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               wos->writeTaint(offset_concrete + i, *ts);
             }
             ignore_write = logRegOp(perryExprManager, state, wos, offset_concrete,
-                         type, value, true, ts);
-          }
+                       type, value, true, ts);
+            }
           if (!ignore_write) {
-            wos->write(offset, value);
+          wos->write(offset, value);
           }
         }
       } else {
@@ -4640,8 +4766,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               mergeTaint(t, *rt);
             }
           }
-          logRegOp(perryExprManager, state, os, offset_concrete,
-                   type, result, false, nullptr, target->inst);
+            logRegOp(perryExprManager, state, os, offset_concrete,
+                     type, result, false, nullptr, target->inst);
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
@@ -4890,7 +5016,8 @@ void Executor::runFunctionAsMain(Function *f,
     }
   }
 
-  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f],
+                                             loopExitingBlocks);
 
   if (pathWriter) 
     state->pathOS = pathWriter->open();
@@ -4956,7 +5083,8 @@ void Executor::runFunctionJustAsIt(llvm::Function *f, bool do_bind) {
   KFunction *kf = kmodule->functionMap[f];
   assert(kf);
 
-  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f],
+                                             loopExitingBlocks);
 
   if (pathWriter) 
     state->pathOS = pathWriter->open();
@@ -5267,6 +5395,7 @@ void Executor::dumpStates() {
 
 Interpreter *Interpreter::create(LLVMContext &ctx, const InterpreterOptions &opts,
                                  InterpreterHandler *ih,
-                                 PerryExprManager &_perryExprManager) {
-  return new Executor(ctx, opts, ih, _perryExprManager);
+                                 PerryExprManager &_perryExprManager,
+                        const std::set<llvm::BasicBlock*> &loopExitingBlocks) {
+  return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks);
 }
