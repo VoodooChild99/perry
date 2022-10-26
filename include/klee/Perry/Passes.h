@@ -111,7 +111,7 @@ public:
   ~ControlDependenceGraphPass();
 
   bool runOnModule(llvm::Module &M) override;
-  void getAnalysisUsage(llvm::AnalysisUsage &AU) const;
+  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
   void constructGraph(llvm::Function &F,
                       std::set<llvm::BasicBlock*> &topBlocks);
   void addEdge(llvm::BasicBlock *src, llvm::BasicBlock *dst);
