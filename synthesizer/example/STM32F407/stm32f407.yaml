@@ -1,0 +1,128 @@
+svd: STM32F40x.svd
+
+prefix: STM32F4
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+additional-peripheral:
+  -
+    base: 0xe000ed00
+    size: 0x28
+
+bitcode:
+  - ../../../../HAL-Collection/STM/STM32F407/build/libhal-STM32F407.bca
+
+peripheral_workload:
+  -
+    target: PWR
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_pwr_ex.bc
+    target-struct: PWR_TypeDef
+    constraint_file: perry-stm32f4-pwr.json
+  -
+    target: SYSCFG
+  -
+    target: FLASH
+  -
+    target: RCC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_rcc.bc
+    target-struct: RCC_TypeDef
+    constraint_file: perry-stm32f4-rcc.json
+  -
+    target: TIM3
+  -
+    target: USART6
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_uart.bc
+    target-struct: USART_TypeDef
+    constraint_file: perry-stm32f4-usart.json
+  -
+    target: GPIOA
+  -
+    target: GPIOB
+  -
+    target: GPIOI
+  -
+    target: RNG
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_rng.bc
+    target-struct: RNG_TypeDef
+    constraint_file: perry-stm32f4-rng.json
+  -
+    target: SPI1
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_spi.bc
+    target-struct: SPI_TypeDef
+    constraint_file: perry-stm32f4-spi.json
+
+board_config:
+  cpu: cortex-m4
+  machine_name: stm32f407
+  clk_freq: 168000000
+  num_irq: 256
+  init_vtor: 0x08000000
+  bitband: true
+
+  memory:
+    -
+      name: wtf
+      base: 0x00000000
+      size: 0x100000
+      type: ram
+    -
+      name: main-flash
+      base: 0x08000000
+      size: 0x00200000
+      type: flash
+    -
+      name: option-bytes1
+      base: 0x1fffc000
+      size: 0x10
+      type: rom
+    -
+      name: option-bytes2
+      base: 0x1ffec000
+      size: 0x10
+      type: rom
+    -
+      name: system-memory
+      base: 0x1fff0000
+      size: 0x7a10
+      type: rom
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x200000
+      type: ram
+
+  peripheral:
+    -
+      kind: TIM3
+    -
+      kind: USART
+      instance: [USART1]
+    -
+      kind: PWR
+    -
+      kind: RCC
+    -
+      kind: FLASH
+    -
+      kind: GPIOA
+    -
+      kind: GPIOB
+    -
+      kind: GPIOI
+      instance: [GPIOC, GPIOD, GPIOE, GPIOF, GPIOG, GPIOH, GPIOI]
+    -
+      kind: RNG
+    -
+      kind: SPI
+      instance: [SPI1]
+    -
+      kind: SYSCFG
