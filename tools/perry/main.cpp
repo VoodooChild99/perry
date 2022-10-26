@@ -2188,7 +2188,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     std::set<SymRead> keySyms;
     collectContainedSym(key.first.expr, keySyms);
     auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
-                                                 false, keySyms);
+                                                 false, keySyms, true);
     z3::expr_vector bit_level_expr_key(z3builder.getContext());
     z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
     auto bit_constraints_key
