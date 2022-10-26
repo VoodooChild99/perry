@@ -4,7 +4,7 @@ prefix: STM32F1
 
 perry-path: ../../../build/bin/perry
 
-perry-memory-limit: 4096
+perry-memory-limit: 49152
 
 additional-peripheral:
   -
@@ -12,16 +12,13 @@ additional-peripheral:
     size: 0x90
 
 bitcode:
-  - bitcode/system_stm32f1xx.bc
-  - bitcode/stm32f1xx_hal.bc
-  - bitcode/stm32f1xx_hal_cortex.bc
-  - bitcode/stm32f1xx_hal_gpio.bc
+  - ../../../../HAL-Collection/STM/STM32F103/build/libhal-STM32F103.bca
 
 peripheral_workload:
   -
     target: PWR
     use-perry: true
-    target-bitcode: bitcode/stm32f1xx_hal_pwr.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_pwr.bc
     target-struct: PWR_TypeDef
     constraint_file: perry-stm32f1-pwr.json
   -
@@ -29,7 +26,7 @@ peripheral_workload:
   -
     target: RCC
     use-perry: true
-    target-bitcode: bitcode/stm32f1xx_hal_rcc.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_rcc.bc
     target-struct: RCC_TypeDef
     constraint_file: perry-stm32f1-rcc.json
   -
@@ -42,9 +39,7 @@ peripheral_workload:
     target: USART1
     kind: USART
     use-perry: true
-    target-bitcode: bitcode/stm32f1xx_hal_uart.bc
-    additional-bitcode:
-      - bitcode/stm32f1xx_hal_rcc.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_uart.bc
     target-struct: USART_TypeDef
     constraint_file: perry-stm32f1-usart.json
   -
@@ -53,7 +48,7 @@ peripheral_workload:
     target: SPI1
     kind: SPI
     use-perry: true
-    target-bitcode: bitcode/stm32f1xx_hal_spi.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f1-spi.json
 
