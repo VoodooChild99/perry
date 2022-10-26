@@ -1056,8 +1056,10 @@ handleSetPersistTaint(ExecutionState &state, KInstruction *target,
       os->setPersistTaint(i + offset, theTaint);
     }
   } else {
-    executor.terminateStateOnUserError(state,
-        "Cannot resolve the address to be tainted");
+    std::stringstream err_msg;
+    err_msg << "Cannot resolve the address to be persistently tainted: "
+            << std::hex << CE_addr->getZExtValue();
+    executor.terminateStateOnUserError(state, err_msg.str());
     return;
   }
 }
