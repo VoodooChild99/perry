@@ -1,0 +1,120 @@
+svd: STM32L07x.svd
+
+prefix: STM32L0
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../HAL-Collection/STM/STM32L073/build/libhal-STM32L073.bca
+
+additional-peripheral:
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000ed00
+    size: 0x28
+
+peripheral_workload:
+  -
+    target: PWR
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_pwr_ex.bc
+    target-struct: PWR_TypeDef
+    constraint_file: perry-stm32l0-pwr.json
+  -
+    target: Flash
+  -
+    target: RCC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_rcc.bc
+    target-struct: RCC_TypeDef
+    constraint_file: perry-stm32l0-rcc.json
+  -
+    target: SYSCFG
+  -
+    target: TIM2
+  -
+    target: USART1
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_uart.bc
+    target-struct: USART_TypeDef
+    constraint_file: perry-stm32l0-usart.json
+  -
+    target: GPIOA
+  -
+    target: GPIOB
+  -
+    target: SPI1
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_spi.bc
+    target-struct: SPI_TypeDef
+    constraint_file: perry-stm32l0-spi.json
+
+board_config:
+  cpu: cortex-m0
+  machine_name: stm32l073
+  clk_freq: 32000000
+  num_irq: 47
+  init_vtor: 0x08000000
+  bitband: false
+
+  memory:
+    -
+      name: wtf
+      base: 0x00000000
+      size: 0x5000
+      type: ram
+    -
+      name: main-flash
+      base: 0x08000000
+      size: 0x00030000
+      type: flash
+    -
+      name: eeprom
+      base: 0x08080000
+      size: 0x1800
+      type: rom
+    -
+      name: system-memory
+      base: 0x1ff00000
+      size: 0x2000
+      type: rom
+    -
+      name: option-bytes
+      base: 0x1ff80000
+      size: 0x80
+      type: rom
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x5000
+      type: ram
+
+  peripheral:
+    -
+      kind: TIM2
+      instance: [TIM3]
+    -
+      kind: USART
+      instance: [USART2]
+    -
+      kind: PWR
+    -
+      kind: RCC
+    -
+      kind: SYSCFG
+    -
+      kind: Flash
+    -
+      kind: GPIOA
+    -
+      kind: GPIOB
+      instance: [GPIOB, GPIOC, GPIOD, GPIOE, GPIOH]
+    -
+      kind: SPI
+      instance: [SPI1, SPI2]
