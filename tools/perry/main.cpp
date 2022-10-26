@@ -1430,34 +1430,34 @@ isUniqueConstraints(std::vector<std::vector<ref<PerryExpr>>> &unique_constraints
   return true;
 }
 
-static bool
-containsReadOnlyTO(const ref<PerryExpr> &target, const SymRead &SR) {
-  std::deque<ref<PerryExpr>> WL;
-  WL.push_back(target);
-  while (!WL.empty()) {
-    auto E = WL.front();
-    WL.pop_front();
-    if (E->getKind() == Expr::Read) {
-      auto RE = cast<PerryReadExpr>(E);
-      if (RE->Name != SR.name) {
-        return false;
-      }
-      if (RE->idx->getKind() != Expr::Constant) {
-        return false;
-      }
-      auto REidx = cast<PerryConstantExpr>(RE->idx);
-      SymRead tmpSR(SR.name, REidx->getAPValue().getZExtValue(), RE->getWidth());
-      if (!tmpSR.relatedWith(SR)) {
-        return false;
-      }
-    }
-    unsigned numKids = E->getNumKids();
-    for (unsigned i = 0; i < numKids; ++i) {
-      WL.push_back(E->getKid(i));
-    }
-  }
-  return true;
-}
+// static bool
+// containsReadOnlyTO(const ref<PerryExpr> &target, const SymRead &SR) {
+//   std::deque<ref<PerryExpr>> WL;
+//   WL.push_back(target);
+//   while (!WL.empty()) {
+//     auto E = WL.front();
+//     WL.pop_front();
+//     if (E->getKind() == Expr::Read) {
+//       auto RE = cast<PerryReadExpr>(E);
+//       if (RE->Name != SR.name) {
+//         return false;
+//       }
+//       if (RE->idx->getKind() != Expr::Constant) {
+//         return false;
+//       }
+//       auto REidx = cast<PerryConstantExpr>(RE->idx);
+//       SymRead tmpSR(SR.name, REidx->getAPValue().getZExtValue(), RE->getWidth());
+//       if (!tmpSR.relatedWith(SR)) {
+//         return false;
+//       }
+//     }
+//     unsigned numKids = E->getNumKids();
+//     for (unsigned i = 0; i < numKids; ++i) {
+//       WL.push_back(E->getKid(i));
+//     }
+//   }
+//   return true;
+// }
 
 // check whether `a` and `b` are in nested blocks. `b` is assumed to be in the
 // inner layer.
@@ -2222,11 +2222,23 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         val_constraints.push_back(bit_constraints_after);
       } else {
         // no constraint on the written value
-        if (!val.after->getKind() == Expr::Constant) {
+        if (val.after->getKind() != Expr::Constant) {
           // if the expr written into the register is not a constant, check:
-          if (containsReadOnlyTO(val.after, val.sym)) {
-            // if only the register itself is contained in the expr:
-            // errs() << val << "...................................\n";
+          // if (containsReadOnlyTO(val.after, val.sym)) {
+          //   // if only the register itself is contained in the expr:
+          //   // errs() << val << "...................................\n";
+            
+          // } else {
+          //   // else, ignore
+          //   std::string tmp;
+          //   raw_string_ostream OS(tmp);
+          //   val.after->print(OS);
+          //   klee_warning_once(
+          //     0,
+          //     "[WR Dep] No constraint on the written symbolic expression: %s\n%s",
+          //     tmp.c_str(), val.sym.to_string().c_str());
+          //   continue;
+          // }
           z3::expr_vector bit_level_expr_after(z3builder.getContext());
           z3::expr_vector bit_level_expr_before(z3builder.getContext());
           if (val.before) {
@@ -2245,17 +2257,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                                               blacklist,
                                                               bit_level_expr_after);
           val_constraints.push_back(bit_constraints_after);
-          } else {
-            // else, ignore
-            std::string tmp;
-            raw_string_ostream OS(tmp);
-            val.after->print(OS);
-            klee_warning_once(
-              0,
-              "[WR Dep] No constraint on the written symbolic expression: %s\n%s",
-              tmp.c_str(), val.sym.to_string().c_str());
-            continue;
-          }
         } else {
           // the written value is constrained to be this constant
           auto PCE = cast<PerryConstantExpr>(val.after);
