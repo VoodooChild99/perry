@@ -1861,9 +1861,9 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   for (auto t : liveTaint) {
     addTaint(byReg, t & 0xff000000);
   }
-  std::cerr << "Possible data registers: ";
+  std::cerr << "Possible data registers offsets: ";
   for (auto t : byReg) {
-    std::cerr << t << ", ";
+    std::cerr << ((t & 0xff000000) >> 24) << ", ";
   }
   std::cerr << "\n";
 
@@ -2426,11 +2426,18 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   bool has_cond_action_content = false;
   for (unsigned i = 0; i < num_conds; ++i) {
     auto &action_set = rr_actions[i];
+    if (rr_conds[i].is_true() || rr_conds[i].is_false()) {
+      klee_warning("Failed to infer actions for RR condition:\n%s\naction is:\n%s",
+                    rr_conds[i].to_string().c_str(),
+                    action_set.to_string().c_str());
+      continue;
+    }
     // this is safe
     auto final_action = z3builder.getLogicalBitExprOr(action_set, false, true);
     if (final_action.is_true()) {
-      klee_warning("Failed to infer actions for condition: %s",
-                   rr_conds[i].to_string().c_str());
+      klee_warning("Failed to infer actions for RR condition:\n%s\naction is:\n%s",
+                   rr_conds[i].to_string().c_str(),
+                   action_set.to_string().c_str());
       continue;
     }
     has_cond_action_content = true;
@@ -2460,10 +2467,17 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   num_conds = wr_conds.size();
   for (unsigned i = 0; i < num_conds; ++i) {
     auto &action_set = wr_actions[i];
+    if (wr_conds[i].is_true() || wr_conds[i].is_false()) {
+      klee_warning("Failed to infer actions for WR condition:\n%s\naction is:\n%s",
+                    wr_conds[i].to_string().c_str(),
+                    action_set.to_string().c_str());
+      continue;
+    }
     auto final_action = z3builder.getLogicalBitExprOr(action_set, false, true);
     if (final_action.is_true()) {
-      klee_warning("Failed to infer actions for condition: %s",
-                   wr_conds[i].to_string().c_str());
+      klee_warning("Failed to infer actions for WR condition:\n%s\naction is:\n%s",
+                   wr_conds[i].to_string().c_str(),
+                   action_set.to_string().c_str());
       continue;
     }
     has_cond_action_content = true;
