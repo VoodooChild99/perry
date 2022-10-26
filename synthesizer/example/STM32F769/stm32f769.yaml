@@ -4,19 +4,16 @@ prefix: STM32F7
 
 perry-path: ../../../build/bin/perry
 
-perry-memory-limit: 4096
+perry-memory-limit: 49152
 
 bitcode:
-  - bitcode/system_stm32f7xx.bc
-  - bitcode/stm32f7xx_hal.bc
-  - bitcode/stm32f7xx_hal_cortex.bc
-  - bitcode/stm32f7xx_hal_gpio.bc
+  - ../../../../HAL-Collection/STM/STM32F769/build/libhal-STM32F769.bca
 
 peripheral_workload:
   -
     target: PWR
     use-perry: true
-    target-bitcode: bitcode/stm32f7xx_hal_pwr_ex.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_pwr_ex.bc
     target-struct: PWR_TypeDef
     constraint_file: perry-stm32f7-pwr.json
   -
@@ -26,7 +23,7 @@ peripheral_workload:
   -
     target: RCC
     use-perry: true
-    target-bitcode: bitcode/stm32f7xx_hal_rcc.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_rcc.bc
     target-struct: RCC_TypeDef
     constraint_file: perry-stm32f7-rcc.json
   -
@@ -35,9 +32,7 @@ peripheral_workload:
     target: USART6
     kind: USART
     use-perry: true
-    target-bitcode: bitcode/stm32f7xx_hal_uart.bc
-    additional-bitcode:
-      - bitcode/stm32f7xx_hal_rcc.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_uart.bc
     target-struct: USART_TypeDef
     constraint_file: perry-stm32f7-usart.json
   -
@@ -47,14 +42,14 @@ peripheral_workload:
   -
     target: RNG
     use-perry: true
-    target-bitcode: bitcode/stm32f7xx_hal_rng.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_rng.bc
     target-struct: RNG_TypeDef
     constraint_file: perry-stm32f7-rng.json
   -
     target: SPI1
     kind: SPI
     use-perry: true
-    target-bitcode: bitcode/stm32f7xx_hal_spi.bc
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f7-spi.json
 
