@@ -25,6 +25,15 @@ class Synthesizer:
     self.peripheral_results: Mapping[str, Tuple[str, str, str]] = {}
     self.board_result = None
 
+  def __get_peripheral_base(self, p: SVDPeripheral) -> int:
+    p_derived_from = p.get_derived_from()
+    p_p = p
+    if p_derived_from is not None:
+      p_p = p_derived_from
+    first_reg: SVDRegister = p_p.registers[0]
+    return first_reg.address_offset + p._base_address
+    
+  
   def __get_peripheral_size(self, p: SVDPeripheral) -> int:
     p_derived_from = p.get_derived_from()
     if p_derived_from is not None:
@@ -32,31 +41,81 @@ class Synthesizer:
     last_reg: SVDRegister = p.registers[-1]
     return last_reg.address_offset + (last_reg._size >> 3)
   
+  def __parse_ar_archive(self, path: str) -> List[str]:
+    contained_files = subprocess.check_output(['ar', '-t', path]).decode().strip()
+    return contained_files.split('\n')
+  
+  def __extract_from_ar_archive(self, ar_path: str, name: str):
+    os.system("ar -x {} {} --output={}".format(
+      ar_path, name, Path(ar_path).parent
+    ))
+
   def __setup_perry_cmdline(self):
     self.perry_common_cmd = [self.perry_path]
 
+    shared_bitcode_generalized = set()
     for bc in self.shared_bitcode:
-      self.perry_common_cmd.append("--link-llvm-lib={}".format(bc))
+      bc_path = Path(bc)
+      if bc_path.suffix == '.bca' or bc_path.suffix == ".a":
+        # additional checks for *.bca and *.a
+        for cbc in self.__parse_ar_archive(bc):
+          cbc_path = bc_path.parent / cbc
+          if not cbc_path.exists():
+            self.__extract_from_ar_archive(bc, cbc);
+          shared_bitcode_generalized.add(str(bc_path.parent / cbc))
+      else:
+        shared_bitcode_generalized.add(bc)
+    self.shared_bitcode = list(shared_bitcode_generalized)
     
-    self.perry_common_cmd.append("--allocate-determ")
-    self.perry_common_cmd.append("--allocate-determ-start-address=0x20000000")
-    self.perry_common_cmd.append("--allocate-determ-size=512")
-    self.perry_common_cmd.append("--libc=none")
-    self.perry_common_cmd.append("--output-stats=false")
-    self.perry_common_cmd.append("--output-istats=false")
+    self.perry_common_cmd += [
+      "--allocate-determ",
+      "--allocate-determ-start-address=0x20000000",
+      "--allocate-determ-size=512",
+      "--libc=none",
+      "--output-stats=false",
+      "--output-istats=false"
+    ]
+
     if self.perry_memory_limit is not None:
       self.perry_common_cmd.append("--max-memory={}".format(self.perry_memory_limit))
 
     peripherals: List[SVDPeripheral] = self.device.peripherals
+
+    # try resolve conflict
+    all_ranges = []
     for p in peripherals:
-      self.perry_common_cmd.append("--periph-address={}".format(hex(p._base_address)))
-      self.perry_common_cmd.append("--periph-size={}".format(
-        hex(self.__get_peripheral_size(p))
-      ))
-    
+      _p_base = self.__get_peripheral_base(p)
+      _p_size = self.__get_peripheral_size(p)
+      all_ranges.append((_p_base, _p_base + _p_size - 1))
     for p in self.additional_peripheral:
-      self.perry_common_cmd.append("--periph-address={}".format(hex(p['base'])))
-      self.perry_common_cmd.append("--periph-size={}".format(hex(p['size'])))
+      all_ranges.append((p['base'], p['base'] + p['size'] - 1))
+    
+    all_ranges = sorted(all_ranges, key=lambda x:x[0])
+    ranges_no_conflict = []
+    prev_range = all_ranges[0]
+    ranges_no_conflict.append(prev_range)
+    for i in range(1, len(all_ranges)):
+      prev_end = prev_range[1]
+      cur_begin = all_ranges[i][0]
+      cur_end = all_ranges[i][1]
+      if prev_end >= cur_begin:
+        if cur_end <= prev_end:
+          print("merging peripheral range [{}, {}] and [{}, {}]".format(
+            hex(prev_range[0]), hex(prev_range[1]),
+            hex(all_ranges[i][0]), hex(all_ranges[i][1])))
+        else:
+          print("failed to merge overlapping peripheral range [{}, {}] and [{}, {}]".format(
+            hex(prev_range[0]), hex(prev_range[1]),
+            hex(all_ranges[i][0]), hex(all_ranges[i][1])))
+          exit(10)
+      else:
+        # no conflict
+        prev_range = all_ranges[i]
+        ranges_no_conflict.append(prev_range)
+    
+    for p in ranges_no_conflict:
+      self.perry_common_cmd.append("--periph-address={}".format(hex(p[0])))
+      self.perry_common_cmd.append("--periph-size={}".format(hex(p[1] - p[0] + 1)))
     
     if self.board_bitband:
       self.perry_common_cmd += [
@@ -66,8 +125,22 @@ class Synthesizer:
         "--bitband-alias-size=0x02000000"
       ]
     
-    self.perry_common_cmd.append("--arm-cpu-version={}".format(self.cpu_type_name))
-    self.perry_common_cmd.append("--write-no-tests=true")
+    if self.succ_ret_file:
+      self.perry_common_cmd.append(
+        "--perry-succ-ret-file={}".format(self.succ_ret_file))
+    
+    for ef in self.exclude_function:
+      self.perry_common_cmd.append("--exclude-function-list={}".format(ef))
+    
+    for incf in self.include_function:
+      self.perry_common_cmd.append("--include-function-list={}".format(incf))
+
+    self.perry_common_cmd += [
+      "--arm-cpu-version={}".format(self.cpu_type_name),
+      "--write-no-tests=true",
+      # "--search=dfs",
+      "--max-solver-time=10s",
+    ]
   
   def __parse_yaml(self):
     with open(self.config_file, 'r') as f:
@@ -133,6 +206,22 @@ class Synthesizer:
       self.perry_memory_limit = y['perry-memory-limit']
     else:
       self.perry_memory_limit = None
+    # success return file
+    if 'success-ret-file' in y:
+      self.succ_ret_file = str(config_file_path.parent / y['success-ret-file'])
+    else:
+      self.succ_ret_file = None
+    # excluded functions
+    if 'exclude-function' in y:
+      self.exclude_function = y['exclude-function']
+    else:
+      self.exclude_function = []
+    # (additionally) included functions
+    if 'include-function' in y:
+      self.include_function = y['include-function']
+    else:
+      self.include_function = []
+
 
 
   def __setup_peripheral_ctx(
@@ -235,10 +324,10 @@ class Synthesizer:
       regs: List[SVDRegister] = self.target.registers
       # idx = 0
       for r in regs:
-        if r._size != 0x20:
-          print("In {}, the size of register {} is not 32 bits, "
-                "which is not supported by now.".format(target, r.name))
-          sys.exit(2)
+        # if r._size != 0x20:
+        #   print("In {}, the size of register {} is not 32 bits, "
+        #         "which is not supported by now.".format(target, r.name))
+        #   sys.exit(2)
         self.offset_to_reg[r.address_offset] = r
         # if (r.address_offset >> 2) != idx and self.has_data_reg:
         #   print("In {}, the index of register {} is not continuous, "
@@ -272,6 +361,13 @@ class Synthesizer:
     self.cond_actions = new_cond_actions
     # collect irq-related regs
     self.irq_reg_offset = self.__collect_related_regs(self.irq_constraint)
+    # collect data register read/write related regs
+    self.data_related_reg_offset = set.union(
+      self.__collect_related_regs(self.read_constraint),
+      self.__collect_related_regs(self.write_constraint),
+      self.__collect_related_regs(self.between_writes_constraint),
+      self.__collect_related_regs(self.post_writes_constraint)
+    )
     # collect regs used in cond-actions
     self.reg_offset_to_cond_actions: Mapping[int, List[Tuple[ExprRef, ExprRef, List[Int]]]] = {}
     for pair in self.cond_actions:
@@ -428,7 +524,7 @@ class Synthesizer:
         -> Tuple[Set[int], Mapping[str, SVDRegister]]:
     reg_offset_set: Set[int] = set()
     if expr is None:
-      return []
+      return reg_offset_set
     WL: List[ExprRef] = []
     WL.append(expr)
     while len(WL) > 0:
@@ -591,8 +687,9 @@ class Synthesizer:
       elif cur_kind == Z3_OP_EQ:
         set_expr.append(cur)
       else:
-        print("Not supported z3 expr: {}".format(cur))
-        sys.exit(8)
+        print("Not supported z3 expr {}, ignore".format(cur))
+        # sys.exit(8)
+        return []
     for e in set_expr:
       e_kind = e.decl().kind()
       eq_expr = None
@@ -727,6 +824,16 @@ static void {0}({1} *{2}) {{
       content += '\t{}->{} = {};\n'.format(
         self.periph_instance_name, r.name, hex(r._reset_value)
       )
+    # reset write conditions
+    if self.write_constraint is not None:
+      for s in self.__z3_expr_to_reg(self.write_constraint, False):
+        content += '\t{}\n'.format(s)
+    if self.between_writes_constraint is not None:
+      for s in self.__z3_expr_to_reg(self.between_writes_constraint, False):
+        content += '\t{}\n'.format(s)
+    if self.post_writes_constraint is not None:
+      for s in self.__z3_expr_to_reg(self.post_writes_constraint, False):
+        content += '\t{}\n'.format(s)
     body = body.format(
       self.register_reset_func_name,
       self.struct_name,
@@ -880,6 +987,7 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
 }}
 """
     content = ''
+    visited_offset = set()
     for r in self.regs:
       can_read = False
       if r._access is not None:
@@ -892,6 +1000,10 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
             can_read = True
             break
       if not can_read:
+        continue
+      if r.address_offset not in visited_offset:
+        visited_offset.add(r.address_offset)
+      else:
         continue
       content += '\t\tcase A_{}:\n'.format(r.name)
       content += '\t\t\tret = {}->{};\n'.format(
@@ -937,6 +1049,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
 }}
 """
     content = ''
+    visited_offset = set()
     for r in self.regs:
       can_write = False
       if r._access is not None:
@@ -950,10 +1063,21 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
             break
       if not can_write:
         continue
+      if r.address_offset not in visited_offset:
+        visited_offset.add(r.address_offset)
+      else:
+        continue
       content += '\t\tcase A_{}:\n'.format(r.name)
-      content += '\t\t\t{}->{} = value;\n'.format(
-        self.periph_instance_name, r.name
-      )
+      if r.address_offset in self.data_related_reg_offset:
+        # these registers as considered as status registers, as a result,
+        # bits of these registers should only be set by hardware
+        content += '\t\t\t{}->{} &= value;\n'.format(
+          self.periph_instance_name, r.name
+        )
+      else:
+        content += '\t\t\t{}->{} = value;\n'.format(
+          self.periph_instance_name, r.name
+        )
       do_irq_update = False
       if r.address_offset in self.write_datareg_offset:
         content += '\t\t\t{}(NULL, G_IO_OUT, {});\n'.format(
@@ -966,10 +1090,11 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
               do_irq_update = True
           c_cond = self.__z3_expr_to_cond(pair[0])
           c_action = self.__z3_expr_to_reg(pair[1], True)
-          content += '\t\t\tif ({}) {{\n'.format(c_cond)
-          for ca in c_action:
-            content += '\t\t\t\t{}\n'.format(ca)
-          content += '\t\t\t}\n'
+          if len(c_action) > 0:
+            content += '\t\t\tif ({}) {{\n'.format(c_cond)
+            for ca in c_action:
+              content += '\t\t\t\t{}\n'.format(ca)
+            content += '\t\t\t}\n'
           
       if r.address_offset in self.irq_reg_offset:
         do_irq_update = True
@@ -1252,7 +1377,7 @@ static void {0}(MachineState *machine) {{
               ptr_name, irq_idx, i_irq[irq_idx].value
             )
         content += '\tsysbus_mmio_map(SYS_BUS_DEVICE({}), 0, {});\n\n'.format(
-          ptr_name, hex(self.name_to_peripheral[i]._base_address)
+          ptr_name, hex(self.__get_peripheral_base(self.name_to_peripheral[i]))
         )
     body = body.format(
       self.board_periph_init_func_name,
@@ -1460,13 +1585,18 @@ type_init({0});
     addon_cmd = [
       "--target-periph-struct={}".format(target_struct),
       "--target-periph-address={}".format(
-        hex(self.name_to_peripheral[target]._base_address)
+        hex(self.__get_peripheral_base(self.name_to_peripheral[target]))
       ),
       "--perry-out-file={}".format(out_file),
     ]
 
+    bc_to_include = set(self.shared_bitcode)
     for abc in additional_bc:
-      addon_cmd.append("--link-llvm-lib={}".format(abc))
+      bc_to_include.add(abc)
+
+    for bc in bc_to_include:
+      if bc != target_bc:
+        addon_cmd.append("--link-llvm-lib={}".format(bc))
     addon_cmd.append(target_bc)
     subprocess.run(self.perry_common_cmd + addon_cmd, stdout=sys.stdout)
   
