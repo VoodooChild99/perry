@@ -816,6 +816,26 @@ ImplVisitLogicOperator(BUDIV) {
   }
 }
 
+ImplVisitLogicOperator(ITE) {
+  assert(e.is_bv());
+  z3::expr_vector cond(ctx);
+  z3::expr_vector true_res(ctx);
+  z3::expr_vector false_res(ctx);
+  visitLogicBitLevel(
+    e.arg(0), cond, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  visitLogicBitLevel(
+    e.arg(1), true_res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  visitLogicBitLevel(
+    e.arg(2), false_res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  assert(cond.size() == 1);
+  z3::expr bool_cond = cond.back();
+  unsigned num_bits = e.get_sort().bv_size();
+  assert(true_res.size() == num_bits && false_res.size() == num_bits);
+  for (unsigned i = 0; i < num_bits; ++i) {
+    result.push_back((bool_cond && true_res[i]) || (!bool_cond && false_res[i]));
+  }
+}
+
 z3::expr_vector PerryZ3Builder::
 reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
                 std::map<unsigned, unsigned> &bool_id_to_idx,
@@ -1040,6 +1060,11 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
         }
         case Z3_OP_BUDIV_I: {
           visitLogicBUDIV(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_ITE: {
+          visitLogicITE(
             e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
           break;
         }
@@ -1513,7 +1538,8 @@ bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
     Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT,
     Z3_OP_BAND, Z3_OP_BOR, Z3_OP_BNOT,
     Z3_OP_CONCAT, Z3_OP_EXTRACT, Z3_OP_ZERO_EXT,
-    Z3_OP_BMUL, Z3_OP_BADD, Z3_OP_BSUB, Z3_OP_BUDIV, Z3_OP_BUDIV_I
+    Z3_OP_BMUL, Z3_OP_BADD, Z3_OP_BSUB, Z3_OP_BUDIV, Z3_OP_BUDIV_I,
+    Z3_OP_ITE
   };
   z3::expr_vector WL(ctx);
   WL.push_back(e);

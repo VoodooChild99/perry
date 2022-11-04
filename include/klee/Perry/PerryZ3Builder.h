@@ -91,6 +91,8 @@ private:
   DefVisitLogicOperator(BADD);
   DefVisitLogicOperator(BSUB);
   DefVisitLogicOperator(BUDIV);
+  // ite
+  DefVisitLogicOperator(ITE);
   #undef DefVisitLogicOperator
 
   z3::expr
