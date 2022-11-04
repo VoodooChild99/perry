@@ -110,7 +110,7 @@ namespace {
   SuccRetFile("perry-succ-ret-file",
           cl::init(""),
           cl::desc("Specify the file containing successful return values for APIs"));
-
+  
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
 
@@ -2021,7 +2021,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     inNestedScope(last_access->place, cur_access->place)) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
-                    if (PTI.reg_access_idx == cp.regAccesses.size() - 1) {
+                    if (PTI.reg_access_idx == cp.reg_access_idx - 1) {
                       blacklisted = true;
                       break;
                     }
@@ -2035,7 +2035,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                 if (inLoopCondition(cur_access->place) > 0) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
-                    if (PTI.reg_access_idx == cp.regAccesses.size() - 1) {
+                    if (PTI.reg_access_idx == cp.reg_access_idx - 1) {
                       blacklisted = true;
                       break;
                     }
@@ -2060,15 +2060,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
 
         // deal with checkpoints
         for (auto &cp : checkpoints) {
-          unsigned reg_access_size = cp.regAccesses.size();
+          unsigned reg_access_size = cp.reg_access_idx;
           if (reg_access_size < 2) {
             continue;
           }
-          auto &cur_access = cp.regAccesses.back();
+          auto &cur_access = reg_accesses[reg_access_size - 1];
           if (cur_access->AccessType != RegisterAccess::REG_READ) {
             continue;
           }
-          auto &last_access = cp.regAccesses[reg_access_size - 2];
+          auto &last_access = reg_accesses[reg_access_size - 2];
           if (last_access->AccessType != RegisterAccess::REG_WRITE) {
             continue;
           }
@@ -2103,8 +2103,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           SymRead cur_reg(written_reg);
           if (reg_access_size > 2) {
             for (int j = reg_access_size - 3; j >= 0; --j) {
-              auto &cur_PTI = cp.trace[j];
-              auto &tmp_access = cp.regAccesses[cur_PTI.reg_access_idx];
+              auto &cur_PTI = trace[j];
+              auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
               cur_reg = SymRead(tmp_access->name,
                                 tmp_access->offset,
                                 tmp_access->width);

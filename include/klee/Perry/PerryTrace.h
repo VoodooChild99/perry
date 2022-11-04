@@ -135,41 +135,39 @@ private:
 };
 
 struct PerryCheckPoint {
-  PerryTrace trace;
-  std::vector<ref<RegisterAccess>> regAccesses;
+  unsigned ptrace_idx;
+  unsigned reg_access_idx;
   ref<PerryExpr> condition;
   PerryTrace::Constraints constraints;
 
-  PerryCheckPoint(const PerryTrace &pt,
-                  const std::vector<ref<RegisterAccess>> &ra,
+  PerryCheckPoint(unsigned ptrace_idx, unsigned reg_access_idx,
                   const ref<PerryExpr> &condition,
                   const PerryTrace::Constraints &constraints)
-    : trace(pt), regAccesses(ra), condition(condition),
-      constraints(constraints) {}
+    : ptrace_idx(ptrace_idx), reg_access_idx(reg_access_idx),
+      condition(condition), constraints(constraints) {}
 
   PerryCheckPoint(const PerryCheckPoint &CP)
-    : trace(CP.trace), regAccesses(CP.regAccesses), condition(CP.condition),
-      constraints(CP.constraints) {}
+    : ptrace_idx(CP.ptrace_idx), reg_access_idx(CP.reg_access_idx),
+      condition(CP.condition), constraints(CP.constraints) {}
 };
 
 struct PerryCheckPointInternal {
-  PerryTrace trace;
-  std::vector<ref<RegisterAccess>> regAccesses;
+  unsigned ptrace_idx;
+  unsigned reg_access_idx;
   ref<Expr> condition;
   ConstraintSet constraints;
   llvm::Instruction *pc;
 
-  PerryCheckPointInternal(const PerryTrace &pt,
-                          const std::vector<ref<RegisterAccess>> &ra,
+  PerryCheckPointInternal(unsigned ptrace_idx, unsigned reg_access_idx,
                           const ref<Expr> &condition,
                           const ConstraintSet &constraints,
                           llvm::Instruction *pc)
-    : trace(pt), regAccesses(ra), condition(condition),
-      constraints(constraints), pc(pc) {}
+    : ptrace_idx(ptrace_idx), reg_access_idx(reg_access_idx),
+      condition(condition), constraints(constraints), pc(pc) {}
 
   PerryCheckPointInternal(const PerryCheckPointInternal &CP)
-    : trace(CP.trace), regAccesses(CP.regAccesses), condition(CP.condition),
-      constraints(CP.constraints), pc(CP.pc) {}
+    : ptrace_idx(CP.ptrace_idx), reg_access_idx(CP.reg_access_idx),
+      condition(CP.condition), constraints(CP.constraints), pc(CP.pc) {}
 };
 
 struct PerryRecord {

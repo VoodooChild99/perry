@@ -1178,9 +1178,7 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
     for (auto &cs : CP.constraints) {
       perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
     }
-    PerryCheckPoint neg(
-      CP.trace,
-      CP.regAccesses,
+    PerryCheckPoint neg(CP.ptrace_idx, CP.reg_access_idx,
       state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
       perry_cs);
     state.checkPoints.push_back(neg);
@@ -1335,7 +1333,8 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
                 return StatePair(&current, nullptr);
               }
             }
-            PerryCheckPointInternal CP(current.pTrace, current.regAccesses,
+            PerryCheckPointInternal CP(current.pTrace.size(),
+                                       current.regAccesses.size(),
                                        condition, current.constraints, BI);
             checkpoints.emplace(std::make_pair(BI->getParent(), std::move(CP)));
           }
@@ -4833,8 +4832,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       }
 
       return;
-      }
-      }
+    }
+  } 
 
   // we are on an error path (no resolution, multiple resolution, one
   // resolution with out of bounds)
