@@ -11,6 +11,8 @@ additional-peripheral:
     base: 0xe000ed00
     size: 0x28
 
+loop-file: ./loops.yaml
+
 bitcode:
   - ../../../../HAL-Collection/STM/STM32F407/build/libhal-STM32F407.bca
 

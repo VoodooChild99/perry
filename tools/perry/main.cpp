@@ -90,27 +90,37 @@ namespace {
   CollectTaintedCond("collect-state-var",
                      cl::init(false),
                      cl::desc("State Variable Collection (default=false)"));
+
   cl::opt<std::string>
   PerryOutputFile("perry-out-file",
                   cl::desc("Output file path for Perry"),
                   cl::init(""));
+
   cl::opt<bool>
   EnableScopeHeuristic("enable-scope-heuristic",
                        cl::init(true),
                        cl::desc("Enable The Scope Heuristic"));
+
   cl::opt<std::string>
   ARMCPUVersion("arm-cpu-version",
                 cl::init(""),
                 cl::desc("Specify ARM CPU version"));
+
   cl::opt<std::string>
   ApiFile("perry-api-file",
           cl::init(""),
           cl::desc("Specify the file containing collected HAL APIs"));
+
   cl::opt<std::string>
   SuccRetFile("perry-succ-ret-file",
           cl::init(""),
           cl::desc("Specify the file containing successful return values for APIs"));
   
+  cl::opt<std::string>
+  LoopFile("perry-loop-file",
+          cl::init(""),
+          cl::desc("Specify the file containing loop information of APIs"));
+
   cl::opt<std::string>
   InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
 
@@ -1303,6 +1313,116 @@ collectTopLevelFunctions(llvm::Module& MainModule,
   pm.run(MainModule);
 }
 
+struct PerryLoopItem {
+  std::string FilePath;
+  unsigned beginLine = 0;
+  unsigned beginColumn = 0;
+  unsigned endLine = 0;
+  unsigned endColumn = 0;
+
+  PerryLoopItem(const std::string &FilePath, unsigned beginLine,
+                unsigned beginColumn, unsigned endLine, unsigned endColumn)
+    : FilePath(FilePath), beginLine(beginLine), beginColumn(beginColumn),
+      endLine(endLine), endColumn(endColumn) {}
+  PerryLoopItem() = default;
+  PerryLoopItem(const PerryLoopItem &PI)
+    : FilePath(PI.FilePath),
+      beginLine(PI.beginLine), beginColumn(PI.beginColumn),
+      endLine(PI.endLine), endColumn(PI.endColumn) {}
+};
+
+template<>
+struct llvm::yaml::MappingTraits<PerryLoopItem> {
+  static void mapping(IO &io, PerryLoopItem &item) {
+    io.mapRequired("file", item.FilePath);
+    io.mapRequired("begin_line", item.beginLine);
+    io.mapRequired("begin_column", item.beginColumn);
+    io.mapRequired("end_line", item.endLine);
+    io.mapRequired("end_column", item.endColumn);
+  }
+};
+
+template<>
+struct llvm::yaml::SequenceTraits<std::vector<PerryLoopItem>> {
+  static size_t size(IO &io, std::vector<PerryLoopItem> &vec) {
+    return vec.size();
+  }
+
+  static PerryLoopItem &element(IO &io, std::vector<PerryLoopItem> &vec,
+                               size_t index) {
+    if (index >= vec.size()) {
+      vec.resize(index + 1);
+    }
+    return vec[index];
+  }
+};
+
+struct PerryLoopItemLoc {
+  unsigned beginLine = 0;
+  unsigned beginColumn = 0;
+  unsigned endLine = 0;
+  unsigned endColumn = 0;
+
+  PerryLoopItemLoc(unsigned beginLine, unsigned beginColumn,
+                   unsigned endLine, unsigned endColumn)
+    : beginLine(beginLine), beginColumn(beginColumn),
+      endLine(endLine), endColumn(endColumn) {}
+  
+  PerryLoopItemLoc(const PerryLoopItemLoc &IL)
+    : beginLine(IL.beginLine), beginColumn(IL.beginColumn),
+      endLine(IL.endLine), endColumn(IL.endColumn) {}
+  
+  PerryLoopItemLoc(const PerryLoopItem &PI)
+    : beginLine(PI.beginLine), beginColumn(PI.beginColumn),
+      endLine(PI.endLine), endColumn(PI.endColumn) {}
+  
+  // returns true if `this` contains `IL`
+  bool contains(unsigned line, unsigned col) const {
+    return (beginLine <= line && beginColumn <= col &&
+            endLine >= line && endColumn >= col);
+  }
+};
+
+using LoopRangeTy = std::map<std::string, std::vector<PerryLoopItemLoc>>;
+
+static void loadLoopInfo(LoopRangeTy &info) {
+  if (LoopFile.empty()) {
+    klee_warning(
+      "Loop file is not given - fallback to built-in analysis");
+    return;
+  }
+  auto Result = llvm::MemoryBuffer::getFile(LoopFile);
+  if (bool(Result)) {
+    std::vector<PerryLoopItem> ReadItem;
+    llvm::yaml::Input yin(Result->get()->getMemBufferRef());
+    yin >> ReadItem;
+
+    if (bool(yin.error())) {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      OS << "Failed to read data from " << LoopFile;
+      klee_error("%s", err_msg.c_str());
+    } else {
+      for (auto &RI : ReadItem) {
+        if (info.find(RI.FilePath) == info.end()) {
+          info.insert(
+            std::make_pair(
+              RI.FilePath,
+              std::vector<PerryLoopItemLoc> { PerryLoopItemLoc(RI) }));
+        } else {
+          info[RI.FilePath].push_back(PerryLoopItemLoc(RI));
+        }
+      }
+    }
+  } else {
+    std::string err_msg;
+    raw_string_ostream OS(err_msg);
+    OS << "Failed to open " << LoopFile 
+        << ": " << Result.getError().message();
+    klee_error("%s", err_msg.c_str());
+  }
+}
+
 static void setInterpreterOptions(Interpreter::InterpreterOptions &IOpts,
                                   Interpreter::TaintOption::Option TaintOpt,
                                   bool CollectTaintedCondOpt,
@@ -1529,11 +1649,15 @@ static int inNestedScope(Instruction *a, Instruction *b) {
 // -1: dont know
 //  0: not in loop condition
 //  1: yes
-static int inLoopCondition(Instruction *inst) {
-  using SrcLookUpMapValTy 
-    = std::set<std::pair<std::pair<unsigned, unsigned>, std::pair<unsigned, unsigned>>>;
-  using SrcLookUpMapTy = std::map<std::string, SrcLookUpMapValTy>;
-  static SrcLookUpMapTy LookUpMap;
+static int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
+  // static LoopRangeTy _LookUpMap;
+  using LoopUpCacheTy
+    = std::map<std::string, std::map<std::pair<unsigned, unsigned>, bool>>;
+  static LoopUpCacheTy LookUpCache;
+
+  // LoopRangeTy &LookUpMap = LoopRanges.empty() ? _LookUpMap : LoopRanges;
+  LoopRangeTy &LookUpMap = LoopRanges;
+
   if (!inst->hasMetadata(LLVMContext::MD_dbg)) {
     return -1;
   }
@@ -1553,31 +1677,48 @@ static int inLoopCondition(Instruction *inst) {
     return -1;
   }
   auto file_path = (DIF->getDirectory() + "/" + DIF->getFilename()).str();
-  if (LookUpMap.find(file_path) != LookUpMap.end()) {
-    for (auto &p : LookUpMap[file_path]) {
-      if (read_line >= p.first.first && read_line <= p.second.first &&
-          read_col >= p.first.second && read_col <= p.second.second)
-      {
+  // check cache to see if we have issued the same query
+  auto read_pair = std::make_pair(read_line, read_col);
+  auto c_it = LookUpCache.find(file_path);
+  if (c_it != LookUpCache.end()) {
+    auto e_it = c_it->second.find(read_pair);
+    if (e_it != c_it->second.end()) {
+      if (e_it->second) {
         return 1;
+      } else {
+        return 0;
       }
     }
   } else {
-    // init the entry
-    LookUpMap.insert(std::make_pair(file_path, SrcLookUpMapValTy()));
+    LookUpCache.insert(
+      std::make_pair(file_path, std::map<std::pair<unsigned, unsigned>, bool>()));
   }
 
+  // then check existing ranges
+  if (LookUpMap.find(file_path) != LookUpMap.end()) {
+    for (auto &p : LookUpMap[file_path]) {
+      if (p.contains(read_line, read_col)) {
+        LookUpCache[file_path].insert(std::make_pair(read_pair, true));
+        return 1;
+      }
+    }
+    if (!LoopFile.empty()) {
+      LookUpCache[file_path].insert(std::make_pair(read_pair, false));
+      return 0;
+    }
+  } else {
+    if (!LoopFile.empty()) {
+      LookUpCache[file_path].insert(std::make_pair(read_pair, false));
+      return 0;
+    }
+    // init the entry, only executed when the loop file is not given
+    LookUpMap.insert(std::make_pair(file_path, std::vector<PerryLoopItemLoc>()));
+  }
+
+  // fallback: parse the source code, only executed when the loop file is not given
   block_line = read_line;
   block_col = 0;    // read the whole line
 
-  // cannot locate 
-  // if (DScope->getMetadataID() != Metadata::DILexicalBlockKind) {
-  //   block_line = read_line;
-  //   block_col = 0;    // read the whole line
-  // } else {
-  //   auto DILB = cast<DILexicalBlock>(DScope);
-  //   block_line = DILB->getLine();
-  //   block_col = DILB->getColumn() - 1;
-  // }
   std::ifstream src_file(file_path);
   if (src_file.is_open()) {
     std::string line;
@@ -1593,6 +1734,7 @@ static int inLoopCondition(Instruction *inst) {
     while (true) {
       while_pos = line.find("while", tmp_col);
       if (while_pos == std::string::npos) {
+        LookUpCache[file_path].insert(std::make_pair(read_pair, false));
         return 0;
       }
       if (while_pos > 0) {
@@ -1661,14 +1803,14 @@ static int inLoopCondition(Instruction *inst) {
     }
     block_col += 1;
     block_col_end += 1;
-    LookUpMap[file_path].insert(
-      std::make_pair(std::make_pair(block_line, block_col),
-                     std::make_pair(block_line_end, block_col_end)));
-    if (read_line >= block_line && read_line <= block_line_end &&
-        read_col >= block_col && read_col <= block_col_end)
-    {
+    PerryLoopItemLoc new_loc_item(block_line, block_col,
+                                  block_line_end, block_col_end);
+    LookUpMap[file_path].push_back(new_loc_item);
+    if (new_loc_item.contains(read_line, read_col)) {
+      LookUpCache[file_path].insert(std::make_pair(read_pair, true));
       return 1;
     } else {
+      LookUpCache[file_path].insert(std::make_pair(read_pair, false));
       return 0;
     }
   } else {
@@ -1855,7 +1997,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::vector<PerryRecord>> &allRecords,
             const TaintSet &liveTaint,
             const std::map<std::string, std::set<uint64_t>> &OkValuesMap,
-            ControlDependenceGraphPass::NodeMap &nm)
+            ControlDependenceGraphPass::NodeMap &nm,
+            LoopRangeTy &LoopRanges)
 {
   TaintSet byReg;
   for (auto t : liveTaint) {
@@ -2016,7 +2159,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     nm, cur_access->place->getParent(),
                         last_access->place->getParent());
                 
-                if (inLoopCondition(cur_access->place) > 0 &&
+                if (inLoopCondition(cur_access->place, LoopRanges) > 0 &&
                     depend_on_prev == 1 && 
                     inNestedScope(last_access->place, cur_access->place)) {
                   bool blacklisted = false;
@@ -2032,7 +2175,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   }
                 }
               } else if (!last_is_read && i > 0) {
-                if (inLoopCondition(cur_access->place) > 0) {
+                if (inLoopCondition(cur_access->place, LoopRanges) > 0) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
                     if (PTI.reg_access_idx == cp.reg_access_idx - 1) {
@@ -2553,6 +2696,8 @@ int main(int argc, char **argv) {
   std::set<std::string> TopLevelFunctions;
   std::map<StructOffset, std::set<std::string>> PtrFunction;
   std::map<std::string, std::set<uint64_t>> OkValuesMap;
+  LoopRangeTy LoopRanges;
+  loadLoopInfo(LoopRanges);
   collectTopLevelFunctions(*mainModule, TopLevelFunctions, PtrFunction,
                            OkValuesMap);
   EntryPoint = *TopLevelFunctions.begin();
@@ -2691,7 +2836,7 @@ int main(int argc, char **argv) {
   }
 
   postProcess(TopLevelFunctions, FunctionToSymbolName, all_records, liveTaint,
-              OkValuesMap, nm);
+              OkValuesMap, nm, LoopRanges);
 
   // release memory
   delete kmodule;

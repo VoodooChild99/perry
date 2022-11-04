@@ -9,6 +9,8 @@ perry-memory-limit: 49152
 bitcode:
   - ../../../../HAL-Collection/STM/STM32F072/build/libhal-STM32F072.bca
 
+loop-file: ./loops.yaml
+
 additional-peripheral:
   -
     base: 0xe000e010

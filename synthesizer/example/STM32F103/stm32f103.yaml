@@ -14,6 +14,8 @@ additional-peripheral:
 bitcode:
   - ../../../../HAL-Collection/STM/STM32F103/build/libhal-STM32F103.bca
 
+loop-file: ./loops.yaml
+
 peripheral_workload:
   -
     target: PWR

@@ -8,6 +8,8 @@ perry-memory-limit: 49152
 
 success-ret-file: ./succ-ret.yaml
 
+loop-file: ./loops.yaml
+
 exclude-function:
   - UART_TransferGetSendCount
   - UART_SendAddress

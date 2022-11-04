@@ -129,6 +129,10 @@ class Synthesizer:
       self.perry_common_cmd.append(
         "--perry-succ-ret-file={}".format(self.succ_ret_file))
     
+    if self.loop_file:
+      self.perry_common_cmd.append(
+        "--perry-loop-file={}".format(self.loop_file))
+    
     for ef in self.exclude_function:
       self.perry_common_cmd.append("--exclude-function-list={}".format(ef))
     
@@ -211,6 +215,11 @@ class Synthesizer:
       self.succ_ret_file = str(config_file_path.parent / y['success-ret-file'])
     else:
       self.succ_ret_file = None
+    # loop file
+    if 'loop-file' in y:
+      self.loop_file = str(config_file_path.parent / y['loop-file'])
+    else:
+      self.loop_file = None
     # excluded functions
     if 'exclude-function' in y:
       self.exclude_function = y['exclude-function']
@@ -821,9 +830,9 @@ static void {0}({1} *{2}) {{
 """
     content = ''
     for r in self.regs:
-      content += '\t{}->{} = {};\n'.format(
-        self.periph_instance_name, r.name, hex(r._reset_value)
-      )
+        content += '\t{}->{} = {};\n'.format(
+          self.periph_instance_name, r.name, hex(r._reset_value)
+        )
     # reset write conditions
     if self.write_constraint is not None:
       for s in self.__z3_expr_to_reg(self.write_constraint, False):
@@ -996,9 +1005,9 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
       else:
         fields: List[SVDField] = r._fields
         for f in fields:
-          if 'read' in f.access:
-            can_read = True
-            break
+            if 'read' in f.access:
+              can_read = True
+              break
       if not can_read:
         continue
       if r.address_offset not in visited_offset:
@@ -1058,9 +1067,9 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       else:
         fields: List[SVDField] = r._fields
         for f in fields:
-          if 'write' in f.access:
-            can_write = True
-            break
+            if 'write' in f.access:
+              can_write = True
+              break
       if not can_write:
         continue
       if r.address_offset not in visited_offset:
@@ -1521,12 +1530,12 @@ type_init({0});
 #endif
 """
     content = ''
-    content += self._gen_header_include()
+      content += self._gen_header_include()
     content += self._gen_header_qom_def()
     content += self._gen_header_struct()
 
-    body = body.format(self.header_def, content)
-    return body
+      body = body.format(self.header_def, content)
+      return body
   
   def _gen_source(self) -> str:
     generator_list = [
@@ -1608,34 +1617,34 @@ type_init({0});
       root_dir = Path(self.output_dir)
     for t in target:
       the_tuple = self.peripheral_results[t]
-      file_prefix = the_tuple[0]
-      header_file_name = file_prefix + '.h'
-      source_file_name = file_prefix + '.c'
-      if root_dir is None:
-        print("// {}".format(header_file_name))
-        print(the_tuple[1])
-        print("// {}".format(source_file_name))
-        print(the_tuple[2])
-      else:
-        p = root_dir / header_file_name
-        p.write_text(the_tuple[1])
-        p = root_dir / source_file_name
-        p.write_text(the_tuple[2])
+        file_prefix = the_tuple[0]
+        header_file_name = file_prefix + '.h'
+        source_file_name = file_prefix + '.c'
+        if root_dir is None:
+          print("// {}".format(header_file_name))
+          print(the_tuple[1])
+          print("// {}".format(source_file_name))
+          print(the_tuple[2])
+        else:
+          p = root_dir / header_file_name
+          p.write_text(the_tuple[1])
+          p = root_dir / source_file_name
+          p.write_text(the_tuple[2])
   
   def dump_board(self):
     if self.board_result is None:
       print('Board is not synthesized yet, cannot dump')
       return
-    root_dir = None
-    if self.output_dir is not None:
-      root_dir = Path(self.output_dir)
-    out_file_name = self.machine_name + '.c'
-    if root_dir is None:
-      print("// {}".format(out_file_name))
-      print(self.board_result)
-    else:
-      p = root_dir / out_file_name
-      p.write_text(self.board_result)
+      root_dir = None
+      if self.output_dir is not None:
+        root_dir = Path(self.output_dir)
+      out_file_name = self.machine_name + '.c'
+      if root_dir is None:
+        print("// {}".format(out_file_name))
+        print(self.board_result)
+      else:
+        p = root_dir / out_file_name
+        p.write_text(self.board_result)
   
   def dump(self):
     self.dump_peripheral()

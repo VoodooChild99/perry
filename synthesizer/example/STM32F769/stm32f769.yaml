@@ -9,6 +9,8 @@ perry-memory-limit: 49152
 bitcode:
   - ../../../../HAL-Collection/STM/STM32F769/build/libhal-STM32F769.bca
 
+loop-file: ./loops.yaml
+
 peripheral_workload:
   -
     target: PWR
