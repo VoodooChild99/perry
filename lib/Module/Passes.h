@@ -290,7 +290,9 @@ private:
   bool createCellsFrom(llvm::IRBuilder<> &IRB, ParamCell *root);
   void symbolizeFrom(llvm::IRBuilder<> &IRB, ParamCell *root);
   void fillCellInner(llvm::IRBuilder<> &IRB, ParamCell *root);
-  
+  void applyDataHeuristic(llvm::IRBuilder<> &IRB,
+                          std::vector<ParamCell*> &results,
+                          llvm::Function *TargetF);
 };
 
 } // namespace klee

@@ -366,6 +366,7 @@ void FuncSymbolizePass::createParamsFor(Function *TargetF, IRBuilder<> &IRB,
   for (size_t i = 0; i < NumArgs; ++i) {
     ParamCell *PC = new ParamCell();
     PC->ParamType = TargetF->getArg(i)->getType();
+    PC->idx = i;
     if (createCellsFrom(IRB, PC)) {
       results.push_back(PC);
     } else {
@@ -902,6 +903,59 @@ void FuncSymbolizePass::collectTaint(IRBuilder<> &IRB,
   }
 }
 
+void FuncSymbolizePass::
+applyDataHeuristic(IRBuilder<> &IRB, std::vector<ParamCell*> &results,
+                   Function *TargetF) {
+  for (auto root : results) {
+    if (!root) {
+      continue;
+    }
+    if (root->ParamType->isIntegerTy() && root->depth == 0) {
+      auto SP = TargetF->getSubprogram();
+      if (SP->getNumOperands() >= 8) {
+        auto RN = SP->getRetainedNodes();
+        unsigned num_nodes = RN.size();
+        if (num_nodes != 0) {
+          if (root->idx < (int)num_nodes) {
+            auto Node = RN[root->idx];
+            auto LV = dyn_cast<DILocalVariable>(Node);
+            if (LV) {
+              if (LV->getName().contains_insensitive("data")) {
+                // taint it!
+                Value *addr = IRB.CreatePointerCast(root->val, IRB.getInt8PtrTy());
+                int allocSize = DL->getTypeAllocSize(root->ParamType);
+                GuessedBuffers.push_back(std::make_pair(addr, allocSize));
+                continue;
+              }
+            }
+          }
+        }
+      }
+      for (auto &B : *TargetF) {
+        for (auto &I : B) {
+          DbgDeclareInst *DI = dyn_cast<DbgDeclareInst>(&I);
+          if (!DI) {
+            continue;
+          }
+          auto LV = DI->getVariable();
+          if (!LV->isParameter()) {
+            continue;
+          }
+          if ((int)LV->getArg() == root->idx + 1) {
+            if (LV->getName().contains_insensitive("data")) {
+              // taint it!
+              Value *addr = IRB.CreatePointerCast(root->val, IRB.getInt8PtrTy());
+              int allocSize = DL->getTypeAllocSize(root->ParamType);
+              GuessedBuffers.push_back(std::make_pair(addr, allocSize));
+              continue;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 bool FuncSymbolizePass::runOnModule(Module &M) {
   if (TargetStruct.empty()) {
     klee_warning("Peripheral placeholder is absent.");
@@ -1007,6 +1061,7 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     // make all allocated memory region in params symbolic
     symbolizeParams(IRBF, results);
     FunctionToSymbolName->insert(std::make_pair(TFName, "s0"));
+    applyDataHeuristic(IRBF, results, TargetF);
     // taint buffers
     setTaint(IRBF, results);
     // fill in params
