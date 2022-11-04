@@ -1092,10 +1092,38 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
   return condition;
 }
 
+const std::set<std::string> Executor::whitelist {
+  "memcpy", "memset", "memcmp"
+};
+
+bool Executor::
+shouldTerminatePath(ExecutionState &state, BasicBlock *src, BasicBlock *dst) {
+  // if the current function is in the whitelist, ignore
+  if (whitelist.find(dst->getParent()->getName().str()) != whitelist.end()) {
+    return false;
+  }
+
+  // else, terminate the path if visited
+  if (loopExitingBlocks.find(src) != loopExitingBlocks.end()) {
+    auto &paths = state.stack.back().paths;
+    auto p_it = paths.find(dst);
+    if (p_it != paths.end()) {
+      if (p_it->second >= PERRY_PATH_TERMINATE_THRESHOLD) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool Executor::isExitingBlock(BasicBlock *B) {
+  return (loopExitingBlocks.find(B) != loopExitingBlocks.end());
+}
+
 bool Executor::
 canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
   BasicBlock *B = state.prevPC->inst->getParent();
-  if (state.getVisitCnt(B) > ExecutionState::PERRY_PATH_TERMINATE_THRESHOLD) {
+  if (state.getVisitCnt(B) > PERRY_PATH_TERMINATE_THRESHOLD) {
     return false;
   }
   time::Span timeout = coreSolverTimeout;
@@ -1274,9 +1302,9 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (res==Solver::True) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (current.isExitingBlock(BI->getParent())) {
+      if (isExitingBlock(BI->getParent())) {
         auto &checkpoints = current.stack.back().checkpoints;
-        if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(0))) {
+        if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(0))) {
           if (reg_related) {
             auto c_it = checkpoints.find(BI->getParent());
             if (c_it != checkpoints.end()) {
@@ -1326,7 +1354,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(1))) {
+      if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
         std::string MSG;
         raw_string_ostream OS(MSG);
         BI->print(OS);
@@ -1348,7 +1376,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(0))) {
+      if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(0))) {
         // true branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -1363,7 +1391,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
             = false_condition; 
         }
         return StatePair(nullptr, &current);
-      } else if (current.shouldTerminatePath(BI->getParent(), BI->getSuccessor(1))) {
+      } else if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
         // false branch has been taken before within the function call stack
         if (!isInternal) {
           if (pathWriter) {
@@ -4765,7 +4793,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                        type, value, true, ts);
             }
           }
-          wos->write(offset, value);
+            wos->write(offset, value);
           // if (!is_reg_write) {
           //   wos->write(offset, value);
           // }
@@ -4805,8 +4833,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       }
 
       return;
-    }
-  } 
+      }
+      }
 
   // we are on an error path (no resolution, multiple resolution, one
   // resolution with out of bounds)
@@ -4861,10 +4889,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             toConstant(*bound, offset, "[slow path] write taint must be concrete")
               ->toMemory(&offset_concrete);
             for (unsigned int i = 0; i < bytes; ++i) {
-                  wos->writeTaint(offset_concrete + i, *ts);
-                }
-            logRegOp(perryExprManager, *bound, wos, offset_concrete,
-                     bytes * 8, value, true, ts);
+              wos->writeTaint(offset_concrete + i, *ts);
+            }
+              logRegOp(perryExprManager, *bound, wos, offset_concrete,
+                       bytes * 8, value, true, ts);
           }
         }
       } else {
@@ -4878,16 +4906,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
           toConstant(*bound, offset, "[slow path] read taint must be concrete")
             ->toMemory(&offset_concrete);
           for (unsigned int i = 0; i < bytes; ++i) {
-                TaintSet *rt = os->readTaint(offset_concrete + i);
-                if (rt) {
-                  mergeTaint(t, *rt);
-                }
-              }
-          logRegOp(perryExprManager, *bound, os, offset_concrete,
-                   bytes * 8, result, false, nullptr, target->inst);
-              if (do_bitband) {
-                result = ZExtExpr::create(result, orig_type);
-              }
+            TaintSet *rt = os->readTaint(offset_concrete + i);
+            if (rt) {
+              mergeTaint(t, *rt);
+            }
+          }
+            logRegOp(perryExprManager, *bound, os, offset_concrete,
+                     bytes * 8, result, false, nullptr, target->inst);
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
           bindLocal(target, *bound, result, &t);
             } else {
           if (do_bitband) {
@@ -5040,8 +5068,7 @@ void Executor::runFunctionAsMain(Function *f,
     }
   }
 
-  ExecutionState *state = new ExecutionState(kmodule->functionMap[f],
-                                             loopExitingBlocks);
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
 
   if (pathWriter) 
     state->pathOS = pathWriter->open();
@@ -5107,8 +5134,7 @@ void Executor::runFunctionJustAsIt(llvm::Function *f, bool do_bind) {
   KFunction *kf = kmodule->functionMap[f];
   assert(kf);
 
-  ExecutionState *state = new ExecutionState(kmodule->functionMap[f],
-                                             loopExitingBlocks);
+  ExecutionState *state = new ExecutionState(kmodule->functionMap[f]);
 
   if (pathWriter) 
     state->pathOS = pathWriter->open();

@@ -581,6 +581,11 @@ public:
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
   bool canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP);
+  bool shouldTerminatePath(ExecutionState &state,
+                           llvm::BasicBlock *src, llvm::BasicBlock *dst);
+  bool isExitingBlock(llvm::BasicBlock *B);
+  static const int PERRY_PATH_TERMINATE_THRESHOLD = 2;
+  static const std::set<std::string> whitelist;
 };
   
 } // End klee namespace

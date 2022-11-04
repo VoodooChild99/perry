@@ -253,7 +253,6 @@ public:
   std::vector<ref<RegisterAccess>> regAccesses;
   uint64_t retVal;
   std::vector<PerryCheckPoint> checkPoints;
-  const std::set<llvm::BasicBlock*> &loopExitingBlocks;
   std::map<llvm::MDNode*, ref<Expr>> reg_constraints;
 
   std::map<ref<Expr>, ref<PerryExpr>> fast_conversion_table;
@@ -264,8 +263,7 @@ public:
   ExecutionState() = default;
 #endif
   // only to create the initial state
-  explicit ExecutionState(
-    KFunction *kf, const std::set<llvm::BasicBlock*> &);
+  explicit ExecutionState(KFunction *kf);
   // no copy assignment, use copy constructor
   ExecutionState &operator=(const ExecutionState &) = delete;
   // no move ctor
@@ -293,11 +291,7 @@ public:
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
-  bool shouldTerminatePath(llvm::BasicBlock *src, llvm::BasicBlock *dst);
-  bool isExitingBlock(llvm::BasicBlock *B);
   int getVisitCnt(llvm::BasicBlock *B);
-  static const int PERRY_PATH_TERMINATE_THRESHOLD = 2;
-  static const std::set<std::string> whitelist;
 };
 
 struct ExecutionStateIDCompare {

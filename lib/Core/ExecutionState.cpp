@@ -73,9 +73,8 @@ StackFrame::~StackFrame() {
 
 /***/
 
-ExecutionState::ExecutionState(
-  KFunction *kf, const std::set<llvm::BasicBlock*> &loopExitingBlocks)
-    : pc(kf->instructions), prevPC(pc), loopExitingBlocks(loopExitingBlocks) {
+ExecutionState::ExecutionState(KFunction *kf)
+    : pc(kf->instructions), prevPC(pc) {
   pushFrame(nullptr, kf);
   setID();
 }
@@ -115,7 +114,6 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     regAccesses(state.regAccesses),
     retVal(state.retVal),
     checkPoints(state.checkPoints),
-    loopExitingBlocks(state.loopExitingBlocks),
     reg_constraints(state.reg_constraints),
     fast_conversion_table(state.fast_conversion_table) {
   for (const auto &cur_mergehandler: openMergeStack)
@@ -390,33 +388,6 @@ void ExecutionState::addConstraintDirect(ref<Expr> e) {
 
 void ExecutionState::addCexPreference(const ref<Expr> &cond) {
   cexPreferences = cexPreferences.insert(cond);
-}
-
-const std::set<std::string> ExecutionState::whitelist {
-  "memcpy", "memset", "memcmp"
-};
-
-bool ExecutionState::shouldTerminatePath(BasicBlock *src, BasicBlock *dst) {
-  // if the current function is in the whitelist, ignore
-  if (whitelist.find(dst->getParent()->getName().str()) != whitelist.end()) {
-    return false;
-  }
-
-  // else, terminate the path if visited
-  if (loopExitingBlocks.find(src) != loopExitingBlocks.end()) {
-    auto &paths = stack.back().paths;
-    auto p_it = paths.find(dst);
-    if (p_it != paths.end()) {
-      if (p_it->second >= ExecutionState::PERRY_PATH_TERMINATE_THRESHOLD) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-bool ExecutionState::isExitingBlock(BasicBlock *B) {
-  return (loopExitingBlocks.find(B) != loopExitingBlocks.end());
 }
  
 int ExecutionState::getVisitCnt(BasicBlock *B) {
