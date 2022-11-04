@@ -287,6 +287,10 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
           }
           case Metadata::MetadataKind::DICompositeTypeKind: {
             auto CT = cast<DICompositeType>(middleType);
+            if (CT->getTag() != dwarf::DW_TAG_enumeration_type) {
+              hasEnumeration = false;
+              break;
+            }
             middleType = CT->getBaseType();
             break;
           }
