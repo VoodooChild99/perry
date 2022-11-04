@@ -2014,8 +2014,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                            unique_constraints_write,
                                            unique_constraints_irq,
                                            unique_constraints_between_writes,
-                                           unique_constraints_final,
-                                           unique_rr_constraint;
+                                           unique_constraints_final;
   std::set<unsigned> writtenDataRegIdx, readDataRegIdx;
   PerryDependentMap rrDepMap, wrDepMap;
 
