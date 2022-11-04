@@ -4695,10 +4695,6 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
   address = optimizer.optimizeExpr(address, true);
 
-  // fast path: single in-bounds resolution
-  ObjectPair op;
-  bool success;
-  solver->setTimeout(coreSolverTimeout);
   bool do_bitband = false;
   unsigned bitband_bit_numer = 0;
   Expr::Width orig_type = type;
@@ -4727,6 +4723,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
     }
   }
 
+  // fast path: single in-bounds resolution
+  ObjectPair op;
+  bool success;
+  solver->setTimeout(coreSolverTimeout);
   if (!state.addressSpace.resolveOne(state, solver, address, op, success)) {
     address = toConstant(state, address, "resolveOne failure");
     success = state.addressSpace.resolveOne(cast<ConstantExpr>(address), op);
@@ -4777,7 +4777,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             value = old_val;
           }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
-          // bool is_reg_write = false;
+          bool is_reg_write = false;
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
@@ -4786,16 +4786,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             for (unsigned int i = 0; i < type / 8; ++i) {
               wos->writeTaint(offset_concrete + i, *ts);
             }
-            bool is_reg_write = isRegOp(state, wos, offset_concrete);
+            is_reg_write = isRegOp(state, wos, offset_concrete);
             if (is_reg_write) {
               logRegOp(perryExprManager, state, wos, offset_concrete,
                        type, value, true, ts);
             }
           }
+          // wos->write(offset, value);
+          if (!is_reg_write) {
             wos->write(offset, value);
-          // if (!is_reg_write) {
-          //   wos->write(offset, value);
-          // }
+          }
         }
       } else {
         ref<Expr> result = os->read(offset, type);
@@ -4832,9 +4832,122 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       }
 
       return;
+    } else {
+      // let's be positive :)
+      if (!isa<AddExpr>(address)) {
+        goto terminate_on_oob;
+      }
+      auto AE = dyn_cast<AddExpr>(address);
+      auto BS = AE->getKid(0);
+      if (!isa<ConstantExpr>(BS)) {
+        goto terminate_on_oob;
+      }
+      bool success;
+      solver->setTimeout(coreSolverTimeout);
+      if (!state.addressSpace.resolveOne(state, solver, BS, op, success)) {
+        BS = toConstant(state, BS, "resolveOne failure");
+        success = state.addressSpace.resolveOne(cast<ConstantExpr>(BS), op);
+      }
+      solver->setTimeout(time::Span());
+      if (!success) {
+        goto terminate_on_oob;
+      }
+      mo = op.first;
+      ref<Expr> inBoundCond = mo->getBoundsCheckPointer(address, bytes);
+      bool res;
+      solver->setTimeout(coreSolverTimeout);
+      success = solver->mayBeTrue(state.constraints, inBoundCond, res,
+                                  state.queryMetaData);
+      solver->setTimeout(time::Span());
+      if (!success) {
+        goto terminate_on_oob;
+      }
+      if (!res) {
+        goto terminate_on_oob;
+      }
+      addConstraint(state, inBoundCond);
+
+      const ObjectState *os = op.second;
+      offset = mo->getOffsetExpr(address);
+      if (isWrite) {
+        if (os->readOnly) {
+          terminateStateOnError(state, "memory error: object read only",
+                                StateTerminationType::ReadOnly);
+        } else {
+          // handle bit band
+          if (do_bitband) {
+            // new_val = (old_val & ~(1 << bitband_bit_numer)) | (given_val << bitband_bit_numer)
+            ref<Expr> old_val = os->read(offset, Expr::Int8);
+            uint8_t bitband_mask = ~(1 << bitband_bit_numer);
+            old_val = AndExpr::create(
+              old_val, ConstantExpr::create(bitband_mask, Expr::Int8));
+            old_val = OrExpr::create(
+              old_val,
+              ShlExpr::create(
+                ExtractExpr::create(value, 0, Expr::Int8),
+                ConstantExpr::create(bitband_bit_numer, Expr::Int8)));
+            value = old_val;
+          }
+          ObjectState *wos = state.addressSpace.getWriteable(mo, os);
+          bool is_reg_write = false;
+          if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+            uint64_t offset_concrete = 0;
+            // TODO: support symbolic offset?
+            toConstant(state, offset, "[(fixed) fast path] write taint must be concrete")
+              ->toMemory(&offset_concrete);
+            for (unsigned int i = 0; i < type / 8; ++i) {
+              wos->writeTaint(offset_concrete + i, *ts);
+            }
+            is_reg_write = isRegOp(state, wos, offset_concrete);
+            if (is_reg_write) {
+              logRegOp(perryExprManager, state, wos, offset_concrete,
+                       type, value, true, ts);
+            }
+          }
+          // wos->write(offset, value);
+          if (!is_reg_write) {
+            wos->write(offset, value);
+          }
+        }
+      } else {
+        ref<Expr> result = os->read(offset, type);
+        
+        if (interpreterOpts.MakeConcreteSymbolic)
+          result = replaceReadWithSymbolic(state, result);
+        
+        if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+          TaintSet t = *ts;
+          uint64_t offset_concrete = 0;
+          // TODO: support symbolic offset?
+          toConstant(state, offset, "[(fixed) fast path] read taint must be concrete")
+            ->toMemory(&offset_concrete);
+          for (unsigned int i = 0; i < type / 8; ++i) {
+            TaintSet *rt = os->readTaint(offset_concrete + i);
+            if (rt) {
+              mergeTaint(t, *rt);
+            }
+          }
+          if (isRegOp(state, os, offset_concrete)) {
+            logRegOp(perryExprManager, state, os, offset_concrete,
+                     type, result, false, nullptr, target->inst);
+          }
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
+          bindLocal(target, state, result, &t);
+        } else {
+          if (do_bitband) {
+            result = ZExtExpr::create(result, orig_type);
+          }
+          bindLocal(target, state, result);
+        }
+      }
+
+      return;
     }
   } 
 
+terminate_on_oob:
   // we are on an error path (no resolution, multiple resolution, one
   // resolution with out of bounds)
   terminateStateEarly(state, "only allow fast path", StateTerminationType::EARLY);
@@ -4890,8 +5003,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             for (unsigned int i = 0; i < bytes; ++i) {
               wos->writeTaint(offset_concrete + i, *ts);
             }
+            if (isRegOp(*bound, wos, offset_concrete)) {
               logRegOp(perryExprManager, *bound, wos, offset_concrete,
                        bytes * 8, value, true, ts);
+            }
           }
         }
       } else {
@@ -4910,8 +5025,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               mergeTaint(t, *rt);
             }
           }
+          if (isRegOp(*bound, os, offset_concrete)) {
             logRegOp(perryExprManager, *bound, os, offset_concrete,
                      bytes * 8, result, false, nullptr, target->inst);
+          }
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
