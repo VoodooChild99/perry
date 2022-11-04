@@ -688,62 +688,8 @@ void FuncSymbolizePass::setTaint(IRBuilder<> &IRB,
                                  std::vector<ParamCell*> &results)
 {
   std::stack<ParamCell*> WorkStack;
-  int Taint = 0;
-  // peripheral is persistently tainted
-  // for (auto root : results) {
-  //   WorkStack.push(root);
-  //   while (!WorkStack.empty()) {
-  //     ParamCell *PC = WorkStack.top();
-  //     WorkStack.pop();
-  //     if (!PC) {
-  //       continue;
-  //     }
-  //     if (PC->ParamType->isStructTy() &&
-  //         PC->ParamType->getStructName().equals(PeripheralPlaceholder))
-  //     {
-  //       for (auto Child : PC->child) {
-  //         Value *TT = IRB.getInt32(Taint * 0x01000000);
-  //         ++Taint;
-  //         if (Taint > 0xff) {
-  //           klee_error("Register persistent taint too big");
-  //         }
-  //         Value *Size
-  //           = IRB.getInt32(DL->getTypeAllocSize(Child->ParamType));
-  //         Value *Offset;
-  //         if (PC->val) {
-  //           Offset = IRB.CreateGEP(PC->ParamType, PC->val,
-  //                                 {Zero, IRB.getInt32(Child->idx)});
-  //         } else {
-  //           std::stack<ParamCell*> parents;
-  //           ParamCell *P = PC;
-  //           while (P->parent && !P->parent->val) {
-  //             P = P->parent;
-  //             parents.push(P);
-  //           }
-  //           assert(P->parent && P->parent->val);
-  //           ParamCell *Top = P->parent;
-  //           std::vector<Value*> IdxVec;
-  //           IdxVec.push_back(Zero);
-  //           while (!parents.empty()) {
-  //             P = parents.top();
-  //             parents.pop();
-  //             IdxVec.push_back(IRB.getInt32(P->idx));
-  //           }
-  //           Offset = IRB.CreateGEP(Top->ParamType, Top->val, IdxVec);
-  //         }
-  //         Value *Addr = IRB.CreatePointerCast(Offset, IRB.getInt8PtrTy());
-  //         IRB.CreateCall(SetPersistTaintFC, {TT, Addr, Size});
-  //         IRB.CreateCall(SetTaintFC, {TT, Addr, Size});
-  //       }
-  //     }
-  //     std::size_t NumChild = PC->child.size();
-  //     for (std::size_t i = NumChild; i > 0; --i) {
-  //       WorkStack.push(PC->child[i - 1]);
-  //     }
-  //   }
-  // }
-  // buffers are temporarily tainted
-  Taint = 1;
+  int Taint = 1;
+
   for (auto &BF : GuessedBuffers) {
     Value *TT = IRB.getInt32(Taint * 0x00010000);
     Taint += 1;
