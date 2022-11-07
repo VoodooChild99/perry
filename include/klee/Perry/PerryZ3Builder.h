@@ -98,8 +98,7 @@ private:
   z3::expr
   constructULEQFromVector(const z3::expr_vector& left,
                           const z3::expr_vector& right, int mode,
-                          z3::expr_vector &bool_vars,
-                          std::map<unsigned, unsigned> &bool_id_to_idx);
+                          z3::expr_vector &bool_vars);
   z3::expr_vector
   constructBADDFromVector(const z3::expr_vector& left,
                           const z3::expr_vector& right);

@@ -480,8 +480,7 @@ ImplVisitLogicOperator(EQ) {
 z3::expr PerryZ3Builder::
 constructULEQFromVector(const z3::expr_vector& left,
                         const z3::expr_vector& right, int mode,
-                        z3::expr_vector &bool_vars,
-                        std::map<unsigned, unsigned> &bool_id_to_idx)
+                        z3::expr_vector &bool_vars)
 {
   assert(mode == 0 || mode == 1);
   unsigned num_bits = left.size();
@@ -504,8 +503,7 @@ constructULEQFromVector(const z3::expr_vector& left,
         z3::expr_vector local_or(ctx);
         local_or.push_back(!sym_bit);
         for (auto idx : set_idx) {
-          auto tmp_expr = bool_vars[bool_id_to_idx[syms[idx].id()]];
-          local_or.push_back(!tmp_expr);
+          local_or.push_back(!syms[idx]);
         }
         if (local_or.size() == 1) {
           local_and.push_back(local_or[0]);
@@ -562,8 +560,7 @@ ImplVisitLogicOperator(ULEQ) {
   unsigned num_bits = left_res.size();
   assert(num_bits == right_res.size());
   assert(num_bits > 0);
-  result.push_back(constructULEQFromVector(left_res, right_res, mode,
-                                           bool_vars, bool_id_to_idx));
+  result.push_back(constructULEQFromVector(left_res, right_res, mode, bool_vars));
 }
 
 ImplVisitLogicOperator(ULT) {
@@ -798,8 +795,7 @@ ImplVisitLogicOperator(BUDIV) {
     }
     dividend.set(0, zero);
     // 2. quotient[i] = (dividend >= divisor)
-    z3::expr q_bit = constructULEQFromVector(divisor, dividend, 1,
-                                             bool_vars, bool_id_to_idx);
+    z3::expr q_bit = constructULEQFromVector(divisor, dividend, 1, bool_vars);
     q_bit = q_bit.simplify();
     quotient.push_back(q_bit);
     // 3. dividend = (quotient[i] && (dividend - divisor)) || dividend
