@@ -90,6 +90,22 @@ public:
       }
     }
   }
+
+  friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                       const RegisterAccess &RA) {
+    if (RA.AccessType == REG_READ) {
+      os << "Read ";
+    } else if (RA.AccessType == REG_WRITE) {
+      os << "Write ";
+    } else {
+      os << "UNKNOWN ";
+    }
+
+    os << "|" << RA.name << ":" << RA.offset << ":" << RA.width << "| --> ";
+    RA.ExprInReg->print(os);
+    os << "\n";
+    return os;
+  }
 };
 
 class PerryTrace {
