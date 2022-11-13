@@ -1452,7 +1452,7 @@ static void {0}(MachineState *machine) {{
 \tobject_initialize_child(OBJECT(sms), "armv7m", &(sms->armv7m), TYPE_ARMV7M);
 \tqdev_prop_set_uint32(DEVICE(&(sms->armv7m)),"num-irq", {5});
 \tqdev_prop_set_string(DEVICE(&(sms->armv7m)), "cpu-type", machine->cpu_type);
-\tqdev_prop_set_bit(DEVICE(&(sms->armv7m)), "enable-bitband", {9});
+\tqdev_prop_set_bit(DEVICE(&(sms->armv7m)), "enable-bitband", {8});
 \tqdev_connect_clock_in(DEVICE(&(sms->armv7m)), "cpuclk", cpuclk);
 \tqdev_connect_clock_in(DEVICE(&(sms->armv7m)), "refclk", refclk);
 \tqdev_prop_set_uint32(DEVICE(&(sms->armv7m)), "init-nsvtor", {6});
@@ -1461,7 +1461,7 @@ static void {0}(MachineState *machine) {{
 
 \t{7}(machine);
 
-\tarmv7m_load_kernel(ARM_CPU(first_cpu), machine->kernel_filename, {8});
+\tarmv7m_load_kernel(ARM_CPU(first_cpu), machine->kernel_filename, {9}, {10});
 }}
 """
     content = ''
@@ -1470,6 +1470,7 @@ static void {0}(MachineState *machine) {{
       mem_type = m['type']
       if mem_type == 'flash':
         self.flash_size = m['size']
+        self.flash_base = m['base']
       if mem_type == 'ram':
         content += \
           '\tmemory_region_init_ram(mem, NULL, \"{}\", {}, &error_fatal);\n'.format(
@@ -1498,8 +1499,9 @@ static void {0}(MachineState *machine) {{
       self.num_irq,
       hex(self.init_vtor),
       self.board_periph_init_func_name,
-      hex(self.flash_size),
-      "true" if self.board_bitband else "false"
+      "true" if self.board_bitband else "false",
+      hex(self.flash_base),
+      hex(self.flash_size)
     )
     return body
 
