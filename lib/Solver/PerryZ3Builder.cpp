@@ -54,8 +54,8 @@ z3::expr PerryZ3Builder::toZ3Expr(const ref<PerryExpr> &PE) {
       if (EE->width == Expr::Bool) {
         return (expr.extract(EE->offset + EE->width - 1, EE->offset) == ctx.bv_val(1, 1));
       } else {
-      return expr.extract(EE->offset + EE->width - 1, EE->offset);
-    }
+        return expr.extract(EE->offset + EE->width - 1, EE->offset);
+      }
     }
     case Expr::ZExt: {
       const PerryZExtExpr *ZE = cast<PerryZExtExpr>(PE);
@@ -1236,7 +1236,8 @@ visitBitLevel(const z3::expr &e, z3::expr_vector &result) {
     if (kind != Z3_OP_BAND    &&
         kind != Z3_OP_BOR     &&
         kind != Z3_OP_CONCAT  &&
-        kind != Z3_OP_EXTRACT)
+        kind != Z3_OP_EXTRACT &&
+        kind != Z3_OP_BNOT)
     {
       klee_error("visitBitLevel: unsupported operator in expression %s",
                  e.to_string().c_str());
@@ -1351,6 +1352,22 @@ visitBitLevel(const z3::expr &e, z3::expr_vector &result) {
         for ( ; low <= high; ++low) {
           assert(low < c.size());
           result.push_back(c[low]);
+        }
+        break;
+      }
+      case Z3_OP_BNOT: {
+        z3::expr_vector c = child_result[0];
+        unsigned num_bits = c.size();
+        for (unsigned i = 0; i < num_bits; ++i) {
+          if (c[i].is_numeral()) {
+            if (c[i].get_numeral_uint64()) {
+              result.push_back(ctx.bv_val(0, 1));
+            } else {
+              result.push_back(ctx.bv_val(1, 1));
+            }
+          } else {
+            result.push_back(~c[i]);
+          }
         }
         break;
       }
