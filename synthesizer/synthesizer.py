@@ -861,13 +861,13 @@ static void {0}({1} *{2}) {{
         )
     # reset write conditions
     if self.write_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.write_constraint, False):
+      for s in self.__z3_expr_to_reg(self.write_constraint, True):
         content += '\t{}\n'.format(s)
     if self.between_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.between_writes_constraint, False):
+      for s in self.__z3_expr_to_reg(self.between_writes_constraint, True):
         content += '\t{}\n'.format(s)
     if self.post_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.post_writes_constraint, False):
+      for s in self.__z3_expr_to_reg(self.post_writes_constraint, True):
         content += '\t{}\n'.format(s)
     body = body.format(
       self.register_reset_func_name,
