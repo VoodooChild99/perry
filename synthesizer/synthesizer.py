@@ -383,6 +383,7 @@ class Synthesizer:
         #   print("In {}, the size of register {} is not 32 bits, "
         #         "which is not supported by now.".format(target, r.name))
         #   sys.exit(2)
+        if r.address_offset not in self.offset_to_reg:
           self.offset_to_reg[r.address_offset] = r
         # if (r.address_offset >> 2) != idx and self.has_data_reg:
         #   print("In {}, the index of register {} is not continuous, "
@@ -843,6 +844,7 @@ static void {0}({1} *{2}) {{
 """
     content = ''
     for r in self.regs:
+      if r._reset_value is not None:
         content += '\t{}->{} = {};\n'.format(
           self.periph_instance_name, r.name, hex(r._reset_value)
         )
@@ -1018,9 +1020,13 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
       else:
         fields: List[SVDField] = r._fields
         for f in fields:
+          if f.access:
             if 'read' in f.access:
               can_read = True
               break
+          else:
+            can_read = True
+            break
       if not can_read:
         continue
       if r.address_offset not in visited_offset:
@@ -1083,9 +1089,13 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       else:
         fields: List[SVDField] = r._fields
         for f in fields:
+          if f.access:
             if 'write' in f.access:
               can_write = True
               break
+          else:
+            can_write = True
+            break
       if not can_write:
         continue
       if r.address_offset not in visited_offset:
