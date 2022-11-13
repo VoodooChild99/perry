@@ -2373,7 +2373,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     std::set<SymRead> keySyms;
     collectContainedSym(key.first.expr, keySyms);
     auto key_cs = z3builder.getLogicalBitExprAnd(key.first.constraints, "",
-                                                 false, keySyms);
+                                                 false, keySyms, true);
     z3::expr_vector bit_level_expr_key(z3builder.getContext());
     z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_key);
     auto bit_constraints_key
@@ -2384,7 +2384,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       std::set<SymRead> fuckSyms;
       collectContainedSym(val.after, fuckSyms);
       auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                false, fuckSyms);
+                                                false, fuckSyms, true);
       // z3::expr_vector bit_level_expr_before(z3builder.getContext());
       z3::expr_vector bit_level_expr_after(z3builder.getContext());
       // if (val.before) {
@@ -2438,7 +2438,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         std::set<SymRead> fuckSyms;
         collectContainedSym(val.after, fuckSyms);
         auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                  false, fuckSyms);
+                                                  false, fuckSyms, true);
         z3::expr_vector bit_level_expr_before(z3builder.getContext());
         z3::expr_vector bit_level_expr_after(z3builder.getContext());
         if (val.before) {
@@ -2516,7 +2516,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         std::set<SymRead> tmpSyms;
         collectContainedSym(val.after, tmpSyms);
         auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                  false, tmpSyms);
+                                                  false, tmpSyms, true);
         tmp_vec.push_back(wis);
         tmp_vec.push_back(key_cs);
         z3::expr tmp_key_cs = z3::mk_and(tmp_vec);
