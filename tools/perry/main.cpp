@@ -2013,8 +2013,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   std::vector<std::vector<ref<PerryExpr>>> unique_constraints_read,
                                            unique_constraints_write,
                                            unique_constraints_irq,
-                                           unique_constraints_between_writes,
-                                           unique_constraints_final;
+                                           unique_constraints_between_writes;
+  std::vector<std::vector<std::vector<ref<PerryExpr>>>> unique_constraints_final_per_function;
   std::set<unsigned> writtenDataRegIdx, readDataRegIdx;
   PerryDependentMap rrDepMap, wrDepMap;
 
@@ -2029,6 +2029,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     if (OkValuesMap.find(TopFunc) != OkValuesMap.end()) {
       OkVals = &OkValuesMap.at(TopFunc);
     }
+    unique_constraints_final_per_function.push_back(std::vector<std::vector<ref<PerryExpr>>>());
 
     // for (auto &TR : Trace) {
     for (auto &rec : Record) {
@@ -2128,9 +2129,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           for (unsigned i = lastWriteConstraint.size(); i < finalSize; ++i) {
             diffFinalCS.push_back(finalCS[i]);
           }
-          if (!diffFinalCS.empty()) {
-            unique_constraints_final.push_back(diffFinalCS);
-          }
+          unique_constraints_final_per_function.back().push_back(diffFinalCS);
         }
 
         // dependent non-data register reads
@@ -2547,10 +2546,21 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   }
   OutContent += "\",\n";
 
+  z3::expr_vector unique_constraints_final(z3builder.getContext());
   OutContent += "\t\"post_writes_constraint\": \"";
+  for (auto &ucf : unique_constraints_final_per_function) {
+    if (ucf.empty()) {
+      continue;
+    }
+    auto wc = z3builder.getLogicalBitExprBatchOr(ucf, SymName);
+    if (wc.is_true()) {
+      continue;
+    }
+    unique_constraints_final.push_back(wc);
+  }
   if (unique_constraints_final.size() > 0) {
     std::cerr << "\nconstraint final diff: \n";
-    auto wc = z3builder.getLogicalBitExprBatchOr(unique_constraints_final, SymName);
+    auto wc = z3builder.getLogicalBitExprOr(unique_constraints_final, false, true);
     std::cerr << wc << "\n";
     s.reset();
     s.add(wc);
