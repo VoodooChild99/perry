@@ -146,14 +146,14 @@ class Synthesizer:
       cur_end = all_ranges[i][1]
       if prev_end >= cur_begin:
         if cur_end <= prev_end:
-          print("merging peripheral range [{}, {}] and [{}, {}]".format(
+          print("merging overlapping peripheral range [{}, {}] and [{}, {}]".format(
             hex(prev_range[0]), hex(prev_range[1]),
             hex(all_ranges[i][0]), hex(all_ranges[i][1])))
         else:
-          print("failed to merge overlapping peripheral range [{}, {}] and [{}, {}]".format(
+          print("merging (partially) overlapping peripheral range [{}, {}] and [{}, {}]".format(
             hex(prev_range[0]), hex(prev_range[1]),
             hex(all_ranges[i][0]), hex(all_ranges[i][1])))
-          exit(10)
+          prev_range = (prev_range[0], all_ranges[i][1])
       else:
         # no conflict
         prev_range = all_ranges[i]
