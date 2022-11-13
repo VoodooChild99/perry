@@ -1408,7 +1408,7 @@ static void {0}(MachineState *machine) {{
         ins.append(bp['kind'])
       bp_kind = bp['kind']
       periph_struct_name = '{}{}'.format(self.prefix_upper, bp_kind.upper())
-      periph_type_def = 'TYPE_{}_{}'.format(self.prefix_upper, bp_kind)
+      periph_type_def = 'TYPE_{}_{}'.format(self.prefix_upper, bp_kind).upper()
       for i in ins:
         ptr_name = 'p{}'.format(cnt)
         cnt += 1
