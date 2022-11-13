@@ -589,7 +589,7 @@ class Synthesizer:
     else:
       return None
   
-  def __z3_expr_to_cond(self, expr: ExprRef) -> str:
+  def __z3_expr_to_cond(self, expr: ExprRef, value:str="") -> str:
     # what do we support: and, or, xor, not, eq, extract
     # traverse the tree
     class StackCell:
@@ -1137,7 +1137,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
           for ro in pair[2]:
             if ro in self.irq_reg_offset:
               do_irq_update = True
-          c_cond = self.__z3_expr_to_cond(pair[0])
+          c_cond = self.__z3_expr_to_cond(pair[0], "value")
           c_action = self.__z3_expr_to_reg(pair[1], True)
           if len(c_action) > 0:
             content += '\t\t\tif ({}) {{\n'.format(c_cond)
