@@ -1048,7 +1048,7 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
       if self.all_in_one:
         content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
       else:
-      content += '\t\tcase A_{}:\n'.format(r.name)
+        content += '\t\tcase A_{}:\n'.format(r.name)
       content += '\t\t\tret = {}->{};\n'.format(
         self.periph_instance_name, r.name
       )
@@ -1117,7 +1117,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       if self.all_in_one:
         content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
       else:
-      content += '\t\tcase A_{}:\n'.format(r.name)
+        content += '\t\tcase A_{}:\n'.format(r.name)
       if r.address_offset in self.data_related_reg_offset:
         # these registers as considered as status registers, as a result,
         # bits of these registers should only be set by hardware

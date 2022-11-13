@@ -1823,7 +1823,7 @@ static int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
 // -1: no match
 // else: index in `in`
 static int findLastIn(const PerryTrace::Constraints &of,
-                           const PerryTrace::Constraints &in)
+                      const PerryTrace::Constraints &in)
 {
   unsigned of_size = of.size();
   unsigned in_size = in.size();
@@ -2336,26 +2336,26 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             }
           }
 
-        // deal with checkpoints
-        for (auto &cp : checkpoints) {
+          // deal with checkpoints
+          for (auto &cp : checkpoints) {
             unsigned reg_access_size = cp.reg_access_size;
-          if (reg_access_size < 2) {
-            continue;
-          }
-          auto &cur_access = reg_accesses[reg_access_size - 1];
-          if (cur_access->AccessType != RegisterAccess::REG_READ) {
-            continue;
-          }
-          auto &last_access = reg_accesses[reg_access_size - 2];
+            if (reg_access_size < 2) {
+              continue;
+            }
+            auto &cur_access = reg_accesses[reg_access_size - 1];
+            if (cur_access->AccessType != RegisterAccess::REG_READ) {
+              continue;
+            }
+            auto &last_access = reg_accesses[reg_access_size - 2];
             if (last_access->AccessType == RegisterAccess::REG_READ) {
               inferRRDependenceWithCheckPoint(cp, reg_accesses, trace,
                                               rrDepMap, nm, LoopRanges);
             } else if (last_access->AccessType == RegisterAccess::REG_WRITE){
               inferWRDependenceWithCheckPoint(cp, reg_accesses, trace,
                                               wrDepMap, LoopRanges);
-          }
             }
           }
+        }
       }
     }
   }
