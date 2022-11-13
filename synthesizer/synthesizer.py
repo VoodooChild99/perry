@@ -190,6 +190,7 @@ class Synthesizer:
       "--write-no-tests=true",
       # "--search=dfs",
       "--max-solver-time=10s",
+      "--simplify-sym-indices=true"
     ]
   
   def __parse_yaml(self):
