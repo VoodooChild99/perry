@@ -2163,7 +2163,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     inNestedScope(last_access->place, cur_access->place)) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
-                    if (PTI.reg_access_idx == cp.reg_access_idx - 1) {
+                    if (PTI.reg_access_idx == cp.reg_access_size - 1) {
                       blacklisted = true;
                       break;
                     }
@@ -2177,7 +2177,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                 if (inLoopCondition(cur_access->place, LoopRanges) > 0) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
-                    if (PTI.reg_access_idx == cp.reg_access_idx - 1) {
+                    if (PTI.reg_access_idx == cp.reg_access_size - 1) {
                       blacklisted = true;
                       break;
                     }
@@ -2202,7 +2202,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
 
         // deal with checkpoints
         for (auto &cp : checkpoints) {
-          unsigned reg_access_size = cp.reg_access_idx;
+            unsigned reg_access_size = cp.reg_access_size;
           if (reg_access_size < 2) {
             continue;
           }

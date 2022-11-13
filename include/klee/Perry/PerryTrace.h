@@ -135,39 +135,53 @@ private:
 };
 
 struct PerryCheckPoint {
-  unsigned ptrace_idx;
-  unsigned reg_access_idx;
+  unsigned ptrace_size;
+  unsigned reg_access_size;
   ref<PerryExpr> condition;
   PerryTrace::Constraints constraints;
 
-  PerryCheckPoint(unsigned ptrace_idx, unsigned reg_access_idx,
+  PerryCheckPoint(unsigned ptrace_size, unsigned reg_access_size,
                   const ref<PerryExpr> &condition,
                   const PerryTrace::Constraints &constraints)
-    : ptrace_idx(ptrace_idx), reg_access_idx(reg_access_idx),
+    : ptrace_size(ptrace_size), reg_access_size(reg_access_size),
       condition(condition), constraints(constraints) {}
 
   PerryCheckPoint(const PerryCheckPoint &CP)
-    : ptrace_idx(CP.ptrace_idx), reg_access_idx(CP.reg_access_idx),
+    : ptrace_size(CP.ptrace_size), reg_access_size(CP.reg_access_size),
       condition(CP.condition), constraints(CP.constraints) {}
 };
 
 struct PerryCheckPointInternal {
-  unsigned ptrace_idx;
-  unsigned reg_access_idx;
+  unsigned ptrace_size;
+  unsigned reg_access_size;
   ref<Expr> condition;
   ConstraintSet constraints;
-  llvm::Instruction *pc;
+  llvm::MDNode *pc = nullptr;
 
-  PerryCheckPointInternal(unsigned ptrace_idx, unsigned reg_access_idx,
+  PerryCheckPointInternal() = default;
+
+  PerryCheckPointInternal(unsigned ptrace_size, unsigned reg_access_size,
                           const ref<Expr> &condition,
                           const ConstraintSet &constraints,
-                          llvm::Instruction *pc)
-    : ptrace_idx(ptrace_idx), reg_access_idx(reg_access_idx),
+                          llvm::MDNode *pc)
+    : ptrace_size(ptrace_size), reg_access_size(reg_access_size),
       condition(condition), constraints(constraints), pc(pc) {}
 
   PerryCheckPointInternal(const PerryCheckPointInternal &CP)
-    : ptrace_idx(CP.ptrace_idx), reg_access_idx(CP.reg_access_idx),
+    : ptrace_size(CP.ptrace_size), reg_access_size(CP.reg_access_size),
       condition(CP.condition), constraints(CP.constraints), pc(CP.pc) {}
+  
+  inline PerryCheckPointInternal &operator=(const PerryCheckPointInternal &CP) {
+    if (this == &CP) {
+      return *this;
+    }
+    ptrace_size = CP.ptrace_size;
+    reg_access_size = CP.reg_access_size;
+    condition = CP.condition;
+    constraints = CP.constraints;
+    pc = CP.pc;
+    return *this;
+  }
 };
 
 struct PerryRecord {

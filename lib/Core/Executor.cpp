@@ -1120,35 +1120,76 @@ bool Executor::isExitingBlock(BasicBlock *B) {
   return (loopExitingBlocks.find(B) != loopExitingBlocks.end());
 }
 
+void Executor::addCheckPoint(ExecutionState &state, const ref<Expr> &condition,
+                             MDNode *MN) {
+  PerryCheckPointInternal CP(state.pTrace.size(),
+                             state.regAccesses.size(),
+                             condition, state.constraints, MN);
+  state.stack.back().checkpoints[MN] = CP;
+  // state.stack.back().checkpoints.emplace(std::make_pair(MN, std::move(CP)));
+}
+
 bool Executor::
 canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
   BasicBlock *B = state.prevPC->inst->getParent();
-  if (state.getVisitCnt(B) > PERRY_PATH_TERMINATE_THRESHOLD) {
-    return false;
-  }
   time::Span timeout = coreSolverTimeout;
   Solver::Validity res;
-  ConstraintSet related_cs;
+  std::set<ref<Expr>> related_cs;
   ref<Expr> &condition = CP.condition;
-  if (CP.pc->hasMetadata(LLVMContext::MD_dbg)) {
-    MDNode *the_node = CP.pc->getMetadata(LLVMContext::MD_dbg);
-    auto c_it = state.reg_constraints.find(the_node);
-    if (c_it != state.reg_constraints.end()) {
-      ConstraintSet c_set;
-      c_set.push_back(c_it->second);
-      solver->setTimeout(timeout);
-      bool success = solver->evaluate(c_set, condition, res,
-                                      state.queryMetaData);
-      solver->setTimeout(time::Span());
-      if (!success) {
-        klee_warning("Query time out when resolving conflicts");
-      } else {
-        if (res == Solver::True) {
+  MDNode *the_node = CP.pc;
+  auto c_it = state.reg_constraints.find(the_node);
+  if (c_it != state.reg_constraints.end()) {
+    ConstraintSet c_set;
+    c_set.push_back(c_it->second);
+    solver->setTimeout(timeout);
+    bool success = solver->evaluate(c_set, condition, res,
+                                    state.queryMetaData);
+    solver->setTimeout(time::Span());
+    if (!success) {
+      klee_warning("Query time out when resolving conflicts");
+    } else {
+      if (res == Solver::True) {
+        // try modify following constraints
+        ConstraintSet new_cs;
+        std::swap(new_cs, state.constraints);
+        for (auto &cs : new_cs) {
+          ConstraintSet c_set;
+          c_set.push_back(cs);
+          solver->setTimeout(timeout);
+          bool success = solver->evaluate(c_set, condition, res,
+                                          state.queryMetaData);
+          solver->setTimeout(time::Span());
+          // conflicting constraints are omitted
+          if (success && (res == Solver::True)) {
+            continue;
+          }
+          state.constraints.push_back(cs);
+        }
+        bool must_be_false;
+        solver->setTimeout(timeout);
+        bool success = solver->mustBeFalse(state.constraints, Expr::createIsZero(condition), must_be_false,
+                                            state.queryMetaData);
+        solver->setTimeout(time::Span());
+        if (success && !must_be_false) {
+          addConstraint(state, Expr::createIsZero(condition));
+        } else {
+          klee_warning_once(B, "cannot fix program state, abort");
           return false;
         }
+        PerryTrace::Constraints perry_cs;
+        for (auto &cs : CP.constraints) {
+          perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
+        }
+        PerryCheckPoint neg(CP.ptrace_size, CP.reg_access_size,
+          state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
+          perry_cs);
+        state.checkPoints.push_back(neg);
+        klee_warning_once(B, "resolve conflict sucess");
+        return true;
       }
     }
   }
+
   for (auto &cs : CP.constraints) {
     ConstraintSet c_set;
     c_set.push_back(cs);
@@ -1163,9 +1204,36 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
     if (res != Solver::True) {
       continue;
     }
-    related_cs.push_back(cs);
+    related_cs.insert(cs);
   }
   if (related_cs.size() == 1) {
+    // try modify following constraints
+    ConstraintSet new_cs;
+    std::swap(new_cs, state.constraints);
+    for (auto &cs : new_cs) {
+      ConstraintSet c_set;
+      c_set.push_back(cs);
+      solver->setTimeout(timeout);
+      bool success = solver->evaluate(c_set, condition, res,
+                                      state.queryMetaData);
+      solver->setTimeout(time::Span());
+      // conflicting constraints are omitted
+      if (success && (res == Solver::True)) {
+        continue;
+      }
+      state.constraints.push_back(cs);
+    }
+    bool must_be_false;
+    solver->setTimeout(timeout);
+    bool success = solver->mustBeFalse(state.constraints, Expr::createIsZero(condition), must_be_false,
+                                       state.queryMetaData);
+    solver->setTimeout(time::Span());
+    if (success && !must_be_false) {
+      addConstraint(state, Expr::createIsZero(condition));
+    } else {
+      klee_warning_once(B, "cannot fix program state, abort");
+      return false;
+    }
     // now we have two `twin` conditions:
     // a) the preposition condition (i.e., the one within `related_cs`), and
     // b) the postposition condition `condition` (that is assured to be true by `a`)
@@ -1178,7 +1246,7 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
     for (auto &cs : CP.constraints) {
       perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
     }
-    PerryCheckPoint neg(CP.ptrace_idx, CP.reg_access_idx,
+    PerryCheckPoint neg(CP.ptrace_size, CP.reg_access_size,
       state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
       perry_cs);
     state.checkPoints.push_back(neg);
@@ -1304,13 +1372,17 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         auto &checkpoints = current.stack.back().checkpoints;
         if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(0))) {
           if (reg_related) {
-            auto c_it = checkpoints.find(BI->getParent());
-            if (c_it != checkpoints.end()) {
-              if (canResolveConflict(current, c_it->second)) {
-                assert(force_branch);
-                *force_branch = true;
-                checkpoints.erase(BI->getParent());
-                return StatePair(&current, nullptr);
+            if (BI->hasMetadata(LLVMContext::MD_dbg)) {
+              MDNode *MN = BI->getMetadata(LLVMContext::MD_dbg);
+              auto c_it = checkpoints.find(MN);
+              if (c_it != checkpoints.end()) {
+                if (canResolveConflict(current, c_it->second)) {
+                  current.reg_constraints[MN] = Expr::createIsZero(condition);
+                  assert(force_branch);
+                  *force_branch = true;
+                  checkpoints.erase(MN);
+                  return StatePair(&current, nullptr);
+                }
               }
             }
           }
@@ -1323,20 +1395,21 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
             current, "visited true state", StateTerminationType::EARLY);
           return StatePair(nullptr, nullptr);
         } else {
-          if (reg_related && !(condition->isTrue() || condition->isFalse())) {
-            auto c_it = checkpoints.find(BI->getParent());
-            if (c_it != checkpoints.end()) {
-              if (canResolveConflict(current, c_it->second)) {
-                assert(force_branch);
-                *force_branch = true;
-                checkpoints.erase(BI->getParent());
-                return StatePair(&current, nullptr);
+          if (reg_related) {
+            if (BI->hasMetadata(LLVMContext::MD_dbg)) {
+              MDNode *MN = BI->getMetadata(LLVMContext::MD_dbg);
+              auto c_it = checkpoints.find(MN);
+              if (c_it != checkpoints.end()) {
+                if (canResolveConflict(current, c_it->second)) {
+                  current.reg_constraints[MN] = Expr::createIsZero(condition);
+                  assert(force_branch);
+                  *force_branch = true;
+                  checkpoints.erase(MN);
+                  return StatePair(&current, nullptr);
+                }
               }
+              addCheckPoint(current, condition, MN);
             }
-            PerryCheckPointInternal CP(current.pTrace.size(),
-                                       current.regAccesses.size(),
-                                       condition, current.constraints, BI);
-            checkpoints.emplace(std::make_pair(BI->getParent(), std::move(CP)));
           }
         }
       }
@@ -1384,11 +1457,12 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
         }
         // so we take the false branch
         ref<Expr> false_condition = Expr::createIsZero(condition);
-        addConstraint(current, false_condition);
         if (reg_related && BI->hasMetadata(LLVMContext::MD_dbg)) {
           current.reg_constraints[BI->getMetadata(LLVMContext::MD_dbg)]
             = false_condition; 
+          addCheckPoint(current, false_condition, BI->getMetadata(LLVMContext::MD_dbg));
         }
+        addConstraint(current, false_condition);
         return StatePair(nullptr, &current);
       } else if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
         // false branch has been taken before within the function call stack
@@ -1398,11 +1472,12 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
           }
         }
         // so we take the true branch
-        addConstraint(current, condition);
         if (reg_related && BI->hasMetadata(LLVMContext::MD_dbg)) {
           current.reg_constraints[BI->getMetadata(LLVMContext::MD_dbg)]
             = condition;
+          addCheckPoint(current, condition, BI->getMetadata(LLVMContext::MD_dbg));
         }
+        addConstraint(current, condition);
         return StatePair(&current, nullptr);
       }
     }
@@ -1468,9 +1543,6 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
       }
     }
 
-    addConstraint(*trueState, condition);
-    addConstraint(*falseState, Expr::createIsZero(condition));
-
     // Kinda gross, do we even really still want this option?
     if (MaxDepth && MaxDepth<=trueState->depth) {
       terminateStateEarly(*trueState, "max-depth exceeded.", StateTerminationType::MaxDepth);
@@ -1483,7 +1555,11 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
       MDNode *the_node = cur_inst->getMetadata(LLVMContext::MD_dbg);
       trueState->reg_constraints[the_node] = condition;
       falseState->reg_constraints[the_node] = Expr::createIsZero(condition);
+      addCheckPoint(*trueState, condition, the_node);
+      addCheckPoint(*falseState, Expr::createIsZero(condition), the_node);
     }
+    addConstraint(*trueState, condition);
+    addConstraint(*falseState, Expr::createIsZero(condition));
     return StatePair(trueState, falseState);
   }
 }

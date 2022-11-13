@@ -50,7 +50,7 @@ struct StackFrame {
 
   std::vector<const MemoryObject *> allocas;
   Cell *locals;
-  std::map<llvm::BasicBlock *, PerryCheckPointInternal> checkpoints;
+  std::map<llvm::MDNode *, PerryCheckPointInternal> checkpoints;
   std::map<llvm::BasicBlock *, int> paths;
 
   /// Minimum distance to an uncovered instruction once the function

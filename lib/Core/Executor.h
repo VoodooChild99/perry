@@ -584,6 +584,7 @@ public:
   bool shouldTerminatePath(ExecutionState &state,
                            llvm::BasicBlock *src, llvm::BasicBlock *dst);
   bool isExitingBlock(llvm::BasicBlock *B);
+  void addCheckPoint(ExecutionState &state, const ref<Expr> &condition, llvm::MDNode *BI);
   static const int PERRY_PATH_TERMINATE_THRESHOLD = 2;
   static const std::set<std::string> whitelist;
 };
