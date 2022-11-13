@@ -2458,22 +2458,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       } else {
         // no constraint on the written value
         if (val.after->getKind() != Expr::Constant) {
-          // if the expr written into the register is not a constant, check:
-          // if (containsReadOnlyTO(val.after, val.sym)) {
-          //   // if only the register itself is contained in the expr:
-          //   // errs() << val << "...................................\n";
-            
-          // } else {
-          //   // else, ignore
-          //   std::string tmp;
-          //   raw_string_ostream OS(tmp);
-          //   val.after->print(OS);
-          //   klee_warning_once(
-          //     0,
-          //     "[WR Dep] No constraint on the written symbolic expression: %s\n%s",
-          //     tmp.c_str(), val.sym.to_string().c_str());
-          //   continue;
-          // }
           z3::expr_vector bit_level_expr_after(z3builder.getContext());
           z3::expr_vector bit_level_expr_before(z3builder.getContext());
           if (val.before) {
