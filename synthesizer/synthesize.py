@@ -47,7 +47,7 @@ def main(args):
     list_peripherals(args.svd_file)
   
   if args.config_file:
-    s = Synthesizer(args.config_file, args.output_dir)
+    s = Synthesizer(args.config_file, args.output_dir, args.all_in_one)
     try:
       s.run()
       s.dump()
@@ -99,6 +99,13 @@ if __name__ == "__main__":
     type=__to_absolute_path,
     metavar='CONFIG-FILE',
     help='YAML-format config file for the synthesizer'
+  )
+  arg_parser.add_argument(
+    '-a', '--all-in-one',
+    required=False,
+    action='store_true',
+    help="Dump all results to one file",
+    default=False
   )
 
   main(arg_parser.parse_args())

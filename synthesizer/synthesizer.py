@@ -17,9 +17,55 @@ from cmsis_svd.parser import (
 from typing import List, Mapping, Set, Tuple
 
 class Synthesizer:
-  def __init__(self, config_file: str, output_dir: str) -> None:
+  def __init__(self, config_file: str, output_dir: str, all_in_one: bool) -> None:
     self.config_file = config_file
     self.output_dir = output_dir
+    self.all_in_one = all_in_one
+    self.header_include = [
+      'hw/sysbus.h',
+      'qom/object.h'
+    ]
+    self.chardev_include = [
+      'chardev/char-fe.h'
+    ]
+    self.src_include = [
+      'qemu/osdep.h',
+      'qemu/log.h',
+      'qemu/bitops.h',
+      'hw/sysbus.h',
+      'hw/irq.h',
+      'migration/vmstate.h',
+      'hw/registerfields.h',
+      'hw/resettable.h',
+      'hw/qdev-properties-system.h',
+      'exec/cpu-common.h'
+    ]
+    self.board_include = [
+      'qemu/osdep.h',
+      'qemu/units.h',
+      'hw/sysbus.h',
+      'qapi/error.h',
+      'hw/arm/boot.h',
+      'hw/arm/armv7m.h',
+      'hw/boards.h',
+      'exec/address-spaces.h',
+      'hw/misc/unimp.h',
+      'hw/clock.h',
+      'hw/qdev-clock.h',
+      'qom/object.h',
+      'qemu/bitops.h',
+      'hw/qdev-properties-system.h',
+      'sysemu/sysemu.h'
+    ]
+    if self.all_in_one:
+      all_in_one_include = self.src_include + self.header_include + self.board_include + self.chardev_include
+      self.all_in_one_include = []
+      for x in all_in_one_include:
+        if x not in self.all_in_one_include:
+          self.all_in_one_include.append(x)
+    else:
+      self.all_in_one_include = []
+    self.all_in_one_content = ''
     self.__parse_yaml()
     self.__setup_perry_cmdline()
     self.peripheral_results: Mapping[str, Tuple[str, str, str]] = {}
@@ -337,7 +383,7 @@ class Synthesizer:
         #   print("In {}, the size of register {} is not 32 bits, "
         #         "which is not supported by now.".format(target, r.name))
         #   sys.exit(2)
-        self.offset_to_reg[r.address_offset] = r
+          self.offset_to_reg[r.address_offset] = r
         # if (r.address_offset >> 2) != idx and self.has_data_reg:
         #   print("In {}, the index of register {} is not continuous, "
         #         "which is not supported by now.".format(target, r.name))
@@ -418,26 +464,7 @@ class Synthesizer:
     self.can_receive_func_name = "{}_can_receive".format(self.full_name)
     self.receive_func_name = "{}_receive".format(self.full_name)
     self.transmit_func_name = "{}_transmit".format(self.full_name)
-    self.header_include = [
-      'hw/sysbus.h',
-      'qom/object.h'
-    ]
-    self.chardev_include = [
-      'chardev/char-fe.h'
-    ]
-    self.src_include = [
-      'qemu/osdep.h',
-      'qemu/log.h',
-      'qemu/bitops.h',
-      'hw/sysbus.h',
-      'hw/irq.h',
-      'migration/vmstate.h',
-      'hw/registerfields.h',
-      'hw/resettable.h',
-      '{}.h'.format(self.symbol_name),
-      'hw/qdev-properties-system.h',
-      'exec/cpu-common.h'
-    ]
+    self.src_include.append('{}.h'.format(self.symbol_name))
   
   def __setup_board_ctx(self, y):
     self.cpu_type_name = y['cpu']
@@ -461,26 +488,8 @@ class Synthesizer:
     self.board_peripherals = y['peripheral']
     self.board_bitband = y['bitband']
     self.flash_size = None
-    board_include = [
-      'qemu/osdep.h',
-      'qemu/units.h',
-      'hw/sysbus.h',
-      'qapi/error.h',
-      'hw/arm/boot.h',
-      'hw/arm/armv7m.h',
-      'hw/boards.h',
-      'exec/address-spaces.h',
-      'hw/misc/unimp.h',
-      'hw/clock.h',
-      'hw/qdev-clock.h',
-      'qom/object.h',
-      'qemu/bitops.h',
-      'hw/qdev-properties-system.h',
-      'sysemu/sysemu.h'
-    ]
     for p in self.board_peripherals:
-      board_include.append('{}-{}.h'.format(self.prefix, p['kind'].lower()))
-    self.board_include = board_include
+      self.board_include.append('{}-{}.h'.format(self.prefix, p['kind'].lower()))
   
   def __normalize_constraint(self, expr: ExprRef) -> ExprRef:
     def collect_syms(expr: ExprRef) -> List[ExprRef]:
@@ -553,7 +562,7 @@ class Synthesizer:
         right: ExprRef = cur.arg(1)
         assert(left.decl().kind() == Z3_OP_EXTRACT)
         assert(is_bv_value(right))
-        sym_name = left.arg(0).decl().name()
+          sym_name = left.arg(0).decl().name()
         reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
         if sym_name not in self.sym_name_to_reg:
           # reg_idx = (reg_idx >> 2)
@@ -649,24 +658,24 @@ class Synthesizer:
         operand: ExprRef = operand_stack.pop()
         left = operand.arg(0)   # extract
         right = operand.arg(1)  # const
-        sym_name: str = left.arg(0).decl().name()
+          sym_name: str = left.arg(0).decl().name()
         if sym_name not in self.sym_name_to_reg:
           reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
           # reg_idx = (reg_idx >> 2)
           self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
         target_reg = self.sym_name_to_reg[sym_name]
-        extract_high, extract_low = left.params()
-        mask = 0
-        while extract_low <= extract_high:
-          mask |= (1 << extract_low)
-          extract_low += 1
+          extract_high, extract_low = left.params()
+          mask = 0
+          while extract_low <= extract_high:
+            mask |= (1 << extract_low)
+            extract_low += 1
         right_val = right.as_long()
-        if right_val == 1:
+          if right_val == 1:
           tmp = '({}->{} & {})'.format(
             self.periph_instance_name, target_reg.name, hex(mask)
           )
-        else:
-          assert(right_val == 0)
+          else:
+            assert(right_val == 0)
           tmp = '(!({}->{} & {}))'.format(
             self.periph_instance_name, target_reg.name, hex(mask)
           )
@@ -812,11 +821,15 @@ struct {0} {{
       self.periph_size_def, hex(self.__get_peripheral_size(self.target))
     )
     for r in self.regs:
-      body += 'REG{}({}, {})\n'.format(r._size, r.name, hex(r.address_offset))
+      if not self.all_in_one:
+        name_to_use = r.name
+      else:
+        name_to_use = '{}_{}'.format(self.name_upper, r.name)
+      body += 'REG{}({}, {})\n'.format(r._size, name_to_use, hex(r.address_offset))
       fields: List[SVDField] = r._fields
       for f in fields:
         body += '\tFIELD({}, {}, {}, {})\n'.format(
-          r.name, f.name, f.bit_offset, f.bit_width
+          name_to_use, f.name, f.bit_offset, f.bit_width
         )
     body += '\n'
     return body
@@ -1014,6 +1027,9 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
         visited_offset.add(r.address_offset)
       else:
         continue
+      if self.all_in_one:
+        content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
+      else:
       content += '\t\tcase A_{}:\n'.format(r.name)
       content += '\t\t\tret = {}->{};\n'.format(
         self.periph_instance_name, r.name
@@ -1076,6 +1092,9 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         visited_offset.add(r.address_offset)
       else:
         continue
+      if self.all_in_one:
+        content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
+      else:
       content += '\t\tcase A_{}:\n'.format(r.name)
       if r.address_offset in self.data_related_reg_offset:
         # these registers as considered as status registers, as a result,
@@ -1530,12 +1549,16 @@ type_init({0});
 #endif
 """
     content = ''
+    if not self.all_in_one:
       content += self._gen_header_include()
     content += self._gen_header_qom_def()
     content += self._gen_header_struct()
 
+    if not self.all_in_one:
       body = body.format(self.header_def, content)
       return body
+    else:
+      return content
   
   def _gen_source(self) -> str:
     generator_list = [
@@ -1559,6 +1582,8 @@ type_init({0});
       self._gen_src_register_type_func,
       self._gen_src_type_init
     ]
+    if self.all_in_one:
+      generator_list.pop(0)
     body = ''
     for gen_fn in generator_list:
       body += gen_fn()
@@ -1576,6 +1601,8 @@ type_init({0});
       self._gen_board_init_func,
       self._gen_board_type_init
     ]
+    if self.all_in_one:
+      generator_list.pop(0)
     body = ''
     for g in generator_list:
       body += g()
@@ -1617,6 +1644,7 @@ type_init({0});
       root_dir = Path(self.output_dir)
     for t in target:
       the_tuple = self.peripheral_results[t]
+      if not self.all_in_one:
         file_prefix = the_tuple[0]
         header_file_name = file_prefix + '.h'
         source_file_name = file_prefix + '.c'
@@ -1630,11 +1658,14 @@ type_init({0});
           p.write_text(the_tuple[1])
           p = root_dir / source_file_name
           p.write_text(the_tuple[2])
+      else:
+        self.all_in_one_content += (the_tuple[1] + the_tuple[2])
   
   def dump_board(self):
     if self.board_result is None:
       print('Board is not synthesized yet, cannot dump')
       return
+    if not self.all_in_one:
       root_dir = None
       if self.output_dir is not None:
         root_dir = Path(self.output_dir)
@@ -1645,10 +1676,27 @@ type_init({0});
       else:
         p = root_dir / out_file_name
         p.write_text(self.board_result)
+    else:
+      self.all_in_one_content += self.board_result
   
   def dump(self):
     self.dump_peripheral()
     self.dump_board()
+    if self.all_in_one:
+      all_header = ''
+      for h in self.all_in_one_include:
+        all_header += '#include \"{}\"\n'.format(h)
+      all_header += "\n";
+      all_content = all_header + self.all_in_one_content
+      root_dir = None
+      if self.output_dir is not None:
+        root_dir = Path(self.output_dir)
+      out_file_name = self.machine_name + '.c'
+      if root_dir is None:
+        print(all_content)
+      else:
+        p = root_dir / out_file_name
+        p.write_text(all_content)
 
   def run_peripherals(self):
     if self.peripheral_workload is None:
