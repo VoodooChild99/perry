@@ -1992,6 +1992,144 @@ inferRRDependence(const PerryTrace::PerryTraceItem &PTI,
 }
 
 static void
+inferWRDependenceWithCheckPoint(const PerryCheckPoint &cp,
+                                const std::vector<ref<RegisterAccess>> &reg_accesses,
+                                const PerryTrace &trace,
+                                PerryDependentMap &wrDepMap,
+                                LoopRangeTy &LoopRanges) {
+  unsigned reg_access_size = cp.reg_access_size;
+  auto &cur_access = reg_accesses[reg_access_size - 1];
+  auto &last_access = reg_accesses[reg_access_size - 2];
+
+  if (inLoopCondition(cur_access->place, LoopRanges) <= 0) {
+    return;
+  }
+
+  auto &last_result = last_access->ExprInReg;
+  auto &this_result = cur_access->ExprInReg;
+  std::vector<ref<PerryExpr>> after_constraints;
+  after_constraints.push_back(cp.condition);
+  std::set<SymRead> before_syms;
+  collectContainedSym(last_result, before_syms);
+  std::vector<ref<PerryExpr>> before_constraints;
+  auto &cs_to_use = cp.constraints;
+  unsigned num_cs = cs_to_use.size();
+  for (unsigned j = 0; j < num_cs; ++j) {
+    if (containsReadRelated(before_syms, "", cs_to_use[j])) {
+      before_constraints.push_back(cs_to_use[j]);
+    }
+  }
+  DependentItemKey key(
+    SymRead(cur_access->name,
+            cur_access->offset,
+            cur_access->width),
+    this_result, after_constraints);
+  if (wrDepMap.find(key) == wrDepMap.end()) {
+    wrDepMap.insert(
+      std::make_pair(key, std::set<DependentItemVal>()));
+  }
+  // locate last write/read to this reg
+  SymRead written_reg = SymRead(last_access->name,
+                                last_access->offset,
+                                last_access->width);
+  ref<PerryExpr> before_expr = 0;
+  SymRead cur_reg(written_reg);
+  if (reg_access_size > 2) {
+    for (int j = reg_access_size - 3; j >= 0; --j) {
+      auto &cur_PTI = trace[j];
+      auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+      cur_reg = SymRead(tmp_access->name,
+                        tmp_access->offset,
+                        tmp_access->width);
+      if (cur_reg.relatedWith(written_reg)) {
+        before_expr = tmp_access->ExprInReg;
+        break;
+      }
+    }
+  }
+  DependentItemVal val(
+    written_reg, before_expr, last_result, before_constraints);
+  if (before_expr) {
+    val.before_sym = cur_reg;
+  }
+  wrDepMap.at(key).insert(val);
+}
+
+static void
+inferRRDependenceWithCheckPoint(const PerryCheckPoint &cp,
+                                const std::vector<ref<RegisterAccess>> &reg_accesses,
+                                const PerryTrace &trace,
+                                PerryDependentMap &rrDepMap,
+                                ControlDependenceGraphPass::NodeMap &nm,
+                                LoopRangeTy &LoopRanges) {
+  unsigned reg_access_size = cp.reg_access_size;
+  auto &cur_access = reg_accesses[reg_access_size - 1];
+  auto &last_access = reg_accesses[reg_access_size - 2];
+
+  int depend_on_prev
+    = ControlDependenceGraphPass::
+      isControlDependentOn(nm, cur_access->place->getParent(),
+                               last_access->place->getParent());
+  if (!(inLoopCondition(cur_access->place, LoopRanges) > 0 &&
+      depend_on_prev == 1 &&
+      inNestedScope(last_access->place, cur_access->place))) {
+    return;
+  }
+
+  auto &PTI = trace[reg_access_size - 1];
+  auto &last_PTI = trace[reg_access_size - 2];
+  unsigned num_cs = PTI.cur_constraints.size();
+  std::vector<ref<PerryExpr>> before_constraints,
+                              after_constraints;
+  auto &last_result = last_access->ExprInReg;
+  std::set<SymRead> before_syms;
+  collectContainedSym(last_result, before_syms);
+  int this_idx = findLastIn(last_PTI.cur_constraints, PTI.cur_constraints);
+  assert(this_idx != -1);
+  for (unsigned j = this_idx; j < num_cs; ++j) {
+    if (containsReadRelated(before_syms, "", PTI.cur_constraints[j])) {
+      before_constraints.push_back(PTI.cur_constraints[j]);
+    }
+  }
+  if (before_constraints.empty()) {
+    return;
+  }
+  auto &this_result = cur_access->ExprInReg;
+  after_constraints.push_back(cp.condition);
+  DependentItemKey key(
+    SymRead(cur_access->name,
+            cur_access->offset,
+            cur_access->width),
+            this_result, after_constraints);
+  if (rrDepMap.find(key) == rrDepMap.end()) {
+    rrDepMap.insert(
+      std::make_pair(key, std::set<DependentItemVal>()));
+  }
+  ref<PerryExpr> before_expr = 0;
+  SymRead read_reg(last_access->name,
+                   last_access->offset,
+                   last_access->width);
+  SymRead cur_reg(read_reg);
+  for (int j = reg_access_size - 3; j >= 0; --j) {
+    auto &cur_PTI = trace[j];
+    auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
+    cur_reg = SymRead(tmp_access->name,
+                      tmp_access->offset,
+                      tmp_access->width);
+    if (cur_reg.relatedWith(read_reg)) {
+      before_expr = tmp_access->ExprInReg;
+      break;
+    }
+  }
+  DependentItemVal val(
+    read_reg, before_expr, last_result, before_constraints);
+  if (before_expr) {
+    val.before_sym = cur_reg;
+  }
+  rrDepMap.at(key).insert(val);
+}
+
+static void
 postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::string> &FunctionToSymbolName,
             const std::map<std::string, std::vector<PerryRecord>> &allRecords,
@@ -2197,7 +2335,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
               last_is_read = false;
             }
           }
-        }
 
         // deal with checkpoints
         for (auto &cp : checkpoints) {
@@ -2210,58 +2347,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             continue;
           }
           auto &last_access = reg_accesses[reg_access_size - 2];
-          if (last_access->AccessType != RegisterAccess::REG_WRITE) {
-            continue;
+            if (last_access->AccessType == RegisterAccess::REG_READ) {
+              inferRRDependenceWithCheckPoint(cp, reg_accesses, trace,
+                                              rrDepMap, nm, LoopRanges);
+            } else if (last_access->AccessType == RegisterAccess::REG_WRITE){
+              inferWRDependenceWithCheckPoint(cp, reg_accesses, trace,
+                                              wrDepMap, LoopRanges);
           }
-          auto last_result = last_access->ExprInReg;
-          auto this_result = cur_access->ExprInReg;
-          std::vector<ref<PerryExpr>> after_constraints;
-          after_constraints.push_back(cp.condition);
-          std::set<SymRead> before_syms;
-          collectContainedSym(last_result, before_syms);
-          std::vector<ref<PerryExpr>> before_constraints;
-          auto &cs_to_use = cp.constraints;
-          unsigned num_cs = cs_to_use.size();
-          for (unsigned j = 0; j < num_cs; ++j) {
-            if (containsReadRelated(before_syms, "", cs_to_use[j])) {
-              before_constraints.push_back(cs_to_use[j]);
             }
           }
-          DependentItemKey key(
-            SymRead(cur_access->name,
-                    cur_access->offset,
-                    cur_access->width),
-            this_result, after_constraints);
-          if (wrDepMap.find(key) == wrDepMap.end()) {
-            wrDepMap.insert(
-              std::make_pair(key, std::set<DependentItemVal>()));
-          }
-          // locate last write/read to this reg
-          SymRead written_reg = SymRead(last_access->name,
-                                        last_access->offset,
-                                        last_access->width);
-          ref<PerryExpr> before_expr = 0;
-          SymRead cur_reg(written_reg);
-          if (reg_access_size > 2) {
-            for (int j = reg_access_size - 3; j >= 0; --j) {
-              auto &cur_PTI = trace[j];
-              auto &tmp_access = reg_accesses[cur_PTI.reg_access_idx];
-              cur_reg = SymRead(tmp_access->name,
-                                tmp_access->offset,
-                                tmp_access->width);
-              if (cur_reg.relatedWith(written_reg)) {
-                before_expr = tmp_access->ExprInReg;
-                break;
-              }
-            }
-          }
-          DependentItemVal val(
-            written_reg, before_expr, last_result, before_constraints);
-          if (before_expr) {
-            val.before_sym = cur_reg;
-          }
-          wrDepMap.at(key).insert(val);
-        }
       }
     }
   }
