@@ -51,7 +51,11 @@ z3::expr PerryZ3Builder::toZ3Expr(const ref<PerryExpr> &PE) {
     case Expr::Extract: {
       const PerryExtractExpr *EE = cast<PerryExtractExpr>(PE);
       auto expr = toZ3Expr(EE->expr.get());
+      if (EE->width == Expr::Bool) {
+        return (expr.extract(EE->offset + EE->width - 1, EE->offset) == ctx.bv_val(1, 1));
+      } else {
       return expr.extract(EE->offset + EE->width - 1, EE->offset);
+    }
     }
     case Expr::ZExt: {
       const PerryZExtExpr *ZE = cast<PerryZExtExpr>(PE);
@@ -204,8 +208,19 @@ z3::expr PerryZ3Builder::toZ3Expr(const ref<PerryExpr> &PE) {
     }
     case Expr::Eq: {
       const PerryEqExpr *EE = cast<PerryEqExpr>(PE);
-      auto left = toZ3Expr(EE->getLeft());
       auto right = toZ3Expr(EE->getRight());
+      auto left_expr = EE->getLeft();
+      if (left_expr->getWidth() == Expr::Bool) {
+        if (isa<PerryConstantExpr>(left_expr)) {
+          const PerryConstantExpr *PCE = cast<PerryConstantExpr>(left_expr);
+          if (PCE->isTrue()) {
+            return right;
+          } else {
+            return !right;
+          }
+        }
+      }
+      auto left = toZ3Expr(left_expr);
       return (left == right);
     }
     case Expr::Ne: {
