@@ -561,9 +561,14 @@ class Synthesizer:
       elif cur_kind == Z3_OP_EQ:
         left: ExprRef = cur.arg(0)
         right: ExprRef = cur.arg(1)
-        assert(left.decl().kind() == Z3_OP_EXTRACT)
-        assert(is_bv_value(right))
+        if left.decl().kind() == Z3_OP_EXTRACT:
           sym_name = left.arg(0).decl().name()
+        elif is_const(left):
+          sym_name = left.decl().name()
+        else:
+          print("should not happen")
+          sys.exit(20)
+        assert(is_bv_value(right))
         reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
         if sym_name not in self.sym_name_to_reg:
           # reg_idx = (reg_idx >> 2)
@@ -620,7 +625,7 @@ class Synthesizer:
       elif cur_kind == Z3_OP_EQ:
         left: ExprRef = cur.arg(0)
         right: ExprRef = cur.arg(1)
-        assert(left.decl().kind() == Z3_OP_EXTRACT)
+        assert(left.decl().kind() == Z3_OP_EXTRACT or is_const(left))
         assert(is_bv_value(right))
         operand_stack.append(cur)
         op_stack.append(StackCell())
@@ -659,27 +664,33 @@ class Synthesizer:
         operand: ExprRef = operand_stack.pop()
         left = operand.arg(0)   # extract
         right = operand.arg(1)  # const
+        if is_const(left):
+          sym_name: str = left.decl().name()
+        else:
           sym_name: str = left.arg(0).decl().name()
         if sym_name not in self.sym_name_to_reg:
           reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
           # reg_idx = (reg_idx >> 2)
           self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
         target_reg = self.sym_name_to_reg[sym_name]
+        right_val = right.as_long()
+        if len(value) > 0:
+          lhs = value
+        else:
+          lhs = '{}->{}'.format(self.periph_instance_name, target_reg.name)
+        if is_const(left):
+          tmp = '({} == {})'.format(lhs, hex(right_val))
+        else:
           extract_high, extract_low = left.params()
           mask = 0
           while extract_low <= extract_high:
             mask |= (1 << extract_low)
             extract_low += 1
-        right_val = right.as_long()
           if right_val == 1:
-          tmp = '({}->{} & {})'.format(
-            self.periph_instance_name, target_reg.name, hex(mask)
-          )
+            tmp = '({} & {})'.format(lhs, hex(mask))
           else:
             assert(right_val == 0)
-          tmp = '(!({}->{} & {}))'.format(
-            self.periph_instance_name, target_reg.name, hex(mask)
-          )
+            tmp = '(!({} & {}))'.format(lhs, hex(mask))
         sub_expr.append(tmp)
     assert(len(sub_expr) == 1)
     return sub_expr.pop()
