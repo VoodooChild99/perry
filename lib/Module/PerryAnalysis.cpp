@@ -276,8 +276,9 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
       auto retType = SP->getType()->getTypeArray()[0];
       auto middleType = retType;
       bool hasEnumeration = true;
-      while (middleType->getTag() != dwarf::Tag::DW_TAG_enumeration_type &&
-            hasEnumeration)
+      while (middleType &&
+             middleType->getTag() != dwarf::Tag::DW_TAG_enumeration_type &&
+             hasEnumeration)
       {
         switch (middleType->getMetadataID()) {
           case Metadata::MetadataKind::DIDerivedTypeKind: {
@@ -307,6 +308,9 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
             break;
           }
         }
+      }
+      if (!middleType) {
+        hasEnumeration = false;
       }
       if (!hasEnumeration) {
         continue;
