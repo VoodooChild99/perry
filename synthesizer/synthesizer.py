@@ -78,6 +78,9 @@ class Synthesizer:
     if p_derived_from is not None:
       p_p = p_derived_from
     first_reg: SVDRegister = p_p.registers[0]
+    for r in p_p.registers:
+      if r.address_offset < first_reg.address_offset:
+        first_reg = r
     return first_reg.address_offset + p._base_address
     
   
@@ -86,6 +89,9 @@ class Synthesizer:
     if p_derived_from is not None:
       p = p_derived_from
     last_reg: SVDRegister = p.registers[-1]
+    for r in p.registers:
+      if r.address_offset > last_reg.address_offset:
+        last_reg = r
     return last_reg.address_offset + (last_reg._size >> 3)
   
   def __parse_ar_archive(self, path: str) -> List[str]:
