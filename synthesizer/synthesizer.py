@@ -73,26 +73,30 @@ class Synthesizer:
     self.board_result = None
 
   def __get_peripheral_base(self, p: SVDPeripheral) -> int:
+    # p_derived_from = p.get_derived_from()
+    # p_p = p
+    # if p_derived_from is not None:
+    #   p_p = p_derived_from
+    # first_reg: SVDRegister = p_p.registers[0]
+    # for r in p_p.registers:
+    #   if r.address_offset < first_reg.address_offset:
+    #     first_reg = r
+    # return first_reg.address_offset + p._base_address
+    return p._base_address
+
+  def __get_peripheral_end(self, p: SVDPeripheral) -> int:
     p_derived_from = p.get_derived_from()
     p_p = p
     if p_derived_from is not None:
       p_p = p_derived_from
-    first_reg: SVDRegister = p_p.registers[0]
+    last_reg: SVDRegister = p_p.registers[-1]
     for r in p_p.registers:
-      if r.address_offset < first_reg.address_offset:
-        first_reg = r
-    return first_reg.address_offset + p._base_address
-    
-  
-  def __get_peripheral_size(self, p: SVDPeripheral) -> int:
-    p_derived_from = p.get_derived_from()
-    if p_derived_from is not None:
-      p = p_derived_from
-    last_reg: SVDRegister = p.registers[-1]
-    for r in p.registers:
       if r.address_offset > last_reg.address_offset:
         last_reg = r
-    return last_reg.address_offset + (last_reg._size >> 3)
+    return p._base_address + last_reg.address_offset + (last_reg._size >> 3)
+  
+  def __get_peripheral_size(self, p: SVDPeripheral) -> int:
+    return self.__get_peripheral_end(p) - self.__get_peripheral_base(p)
   
   def __parse_ar_archive(self, path: str) -> List[str]:
     contained_files = subprocess.check_output(['ar', '-t', path]).decode().strip()
@@ -149,7 +153,7 @@ class Synthesizer:
     all_ranges = sorted(all_ranges, key=lambda x:x[0])
     ranges_no_conflict = []
     prev_range = all_ranges[0]
-    ranges_no_conflict.append(prev_range)
+
     for i in range(1, len(all_ranges)):
       prev_end = prev_range[1]
       cur_begin = all_ranges[i][0]
@@ -166,8 +170,9 @@ class Synthesizer:
           prev_range = (prev_range[0], all_ranges[i][1])
       else:
         # no conflict
-        prev_range = all_ranges[i]
         ranges_no_conflict.append(prev_range)
+        prev_range = all_ranges[i]
+    ranges_no_conflict.append(prev_range)
     
     for p in ranges_no_conflict:
       self.perry_common_cmd.append("--periph-address={}".format(hex(p[0])))
