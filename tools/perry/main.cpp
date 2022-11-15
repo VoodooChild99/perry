@@ -1666,6 +1666,9 @@ static int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
     klee_error("inLoopCondition: unsupported metadata kind");
   }
   auto DILoc = cast<DILocation>(MDN);
+  if (DILoc->getInlinedAt()) {
+    DILoc = DILoc->getInlinedAt();
+  }
   auto read_line = DILoc->getLine();
   auto read_col = DILoc->getColumn();
   auto DScope = DILoc->getScope();
@@ -1677,6 +1680,12 @@ static int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
     return -1;
   }
   auto file_path = (DIF->getDirectory() + "/" + DIF->getFilename()).str();
+  llvm::SmallString<128> real_path;
+  std::error_code err_code = sys::fs::real_path(file_path, real_path);
+  if (err_code) {
+    klee_error("err when translate %s to real path", file_path.c_str());
+  }
+  file_path = real_path.str().str();
   // check cache to see if we have issued the same query
   auto read_pair = std::make_pair(read_line, read_col);
   auto c_it = LookUpCache.find(file_path);
