@@ -17,10 +17,11 @@ from cmsis_svd.parser import (
 from typing import List, Mapping, Set, Tuple
 
 class Synthesizer:
-  def __init__(self, config_file: str, output_dir: str, all_in_one: bool) -> None:
+  def __init__(self, config_file: str, output_dir: str, all_in_one: bool, debug: bool) -> None:
     self.config_file = config_file
     self.output_dir = output_dir
     self.all_in_one = all_in_one
+    self.debug = debug
     self.header_include = [
       'hw/sysbus.h',
       'qom/object.h'
@@ -97,7 +98,10 @@ class Synthesizer:
     ))
 
   def __setup_perry_cmdline(self):
-    self.perry_common_cmd = [self.perry_path]
+    self.perry_common_cmd = []
+    if self.debug:
+      self.perry_common_cmd += ["gdb", "--args"]
+    self.perry_common_cmd += [self.perry_path]
 
     shared_bitcode_generalized = set()
     for bc in self.shared_bitcode:

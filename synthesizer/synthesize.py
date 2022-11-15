@@ -47,7 +47,7 @@ def main(args):
     list_peripherals(args.svd_file)
   
   if args.config_file:
-    s = Synthesizer(args.config_file, args.output_dir, args.all_in_one)
+    s = Synthesizer(args.config_file, args.output_dir, args.all_in_one, args.debug)
     try:
       s.run()
       s.dump()
@@ -105,6 +105,13 @@ if __name__ == "__main__":
     required=False,
     action='store_true',
     help="Dump all results to one file",
+    default=False
+  )
+  arg_parser.add_argument(
+    '-g', '--debug',
+    required=False,
+    action='store_true',
+    help="debug using GDB",
     default=False
   )
 
