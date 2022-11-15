@@ -176,6 +176,9 @@ klee::linkModules(std::vector<std::unique_ptr<llvm::Module>> &modules,
   for (auto &module : modules) {
     if (!module || !module->getNamedValue(entryFunction))
       continue;
+    if (module->getFunction(entryFunction)->isDeclaration()) {
+      continue;
+    }
     if (composite) {
       errorMsg =
           "Function " + entryFunction.str() +
