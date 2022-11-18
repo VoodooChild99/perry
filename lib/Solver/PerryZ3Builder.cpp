@@ -459,7 +459,9 @@ ImplVisitLogicOperator(EQ) {
   } else if (!left.is_numeral() && !right.is_numeral()) {
     mode = 2; 
   } else {
-    klee_error("Should not happen concret value EQ concret value");
+    result.push_back(
+      ctx.bool_val(left.get_numeral_uint64() == right.get_numeral_uint64()));
+    return;
   }
   for (unsigned i = 0; i < num_bits; ++i) {
     auto left_bit = left_res[i];
