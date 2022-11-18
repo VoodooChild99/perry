@@ -231,7 +231,7 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
       auto EDIT = dyn_cast<DIType>(EI);
       assert(EDIT != nullptr);
       uint64_t bits = EDIT->getSizeInBits();
-      Type *CT;
+      Type *CT = nullptr;
       if (bits == 32) {
         CT = IRB.getInt32Ty();
       } else if (bits == 64) {
@@ -244,7 +244,47 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
         if (EDIT->getName().contains_insensitive("reserved")) {
           continue;
         }
-        klee_error("unsupported type");
+        // array?
+        if (isa<DIDerivedType>(EDIT)) {
+          DIDerivedType *DIDT = cast<DIDerivedType>(EDIT);
+          if (DIDT->getBaseType()) {
+            if (isa<DICompositeType>(DIDT->getBaseType())) {
+              auto MayBeArrayTy = cast<DICompositeType>(DIDT->getBaseType());
+              if (MayBeArrayTy->getTag() == dwarf::DW_TAG_array_type) {
+                if (MayBeArrayTy->getElements().size() == 1 &&
+                    MayBeArrayTy->getElements()[0]->getTag() == dwarf::DW_TAG_subrange_type) {
+                  DISubrange *DIS = cast<DISubrange>(MayBeArrayTy->getElements()[0]);
+                  auto CB = DIS->getRawCountNode();
+                  if (CB && isa<ConstantAsMetadata>(CB)) {
+                    auto *MD = cast<ConstantAsMetadata>(CB);
+                    auto *CI = dyn_cast<ConstantInt>(MD->getValue());
+                    unsigned num_elem = CI->getZExtValue();
+                    unsigned array_size = MayBeArrayTy->getSizeInBits();
+                    unsigned elem_size = array_size / num_elem;
+                    if (elem_size == 32) {
+                      CT = IRB.getInt32Ty();
+                    } else if (elem_size == 16) {
+                      CT = IRB.getInt16Ty();
+                    } else if (elem_size == 8) {
+                      CT = IRB.getInt8Ty();
+                    } else if (elem_size == 64) {
+                      CT = IRB.getInt64Ty();
+                    }
+                    if (CT) {
+                      CT = ArrayType::get(CT, num_elem);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!CT) {
+          std::string err_msg;
+          raw_string_ostream OS(err_msg);
+          EDIT->print(OS);
+          klee_error("unsupported type: %s", err_msg.c_str());
+        }
       }
       Value *TT = IRB.getInt32(Taint * 0x01000000);
       ++Taint;
