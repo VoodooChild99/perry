@@ -162,6 +162,7 @@ void RaiseArmAsmPass::handleAsmInsn(Module &M, Instruction &I,
 
   // now it's an inlined asm for sure
   StringRef AS = IA->getAsmString();
+  AS = AS.substr(AS.find_first_not_of(' '));
   std::string insn = AS.substr(0, AS.find_first_of(' ')).lower();
 
   if (insn.empty()) {
@@ -180,7 +181,7 @@ void RaiseArmAsmPass::handleAsmInsn(Module &M, Instruction &I,
   }
   
   if (handlerMap.find(insn) == handlerMap.end()) {
-    klee_warning("Missing lift handler for ARM instruction %s", insn.c_str());
+    klee_warning("Missing lift handler for ARM instruction %s", AS.str().c_str());
     return;
   }
 
