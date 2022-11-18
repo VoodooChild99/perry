@@ -686,6 +686,124 @@ ImplVisitLogicOperator(ZERO_EXT) {
   }
 }
 
+ImplVisitLogicOperator(SIGN_EXT) {
+  visitLogicBitLevel(
+    e.arg(0), result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  auto num_bits = e.get_sort().bv_size();
+  auto sign_bit = result.back();
+  for (unsigned i = result.size(); i <num_bits; ++i) {
+    result.push_back(sign_bit);
+  }
+}
+
+// bv shift
+ImplVisitLogicOperator(BLSHR) {
+  z3::expr_vector lhs(ctx);
+  auto num_bits = e.get_sort().bv_size();
+  visitLogicBitLevel(
+    e.arg(0), lhs, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  if (e.arg(1).is_numeral()) {
+    unsigned shift = e.arg(1).get_numeral_uint();
+    if (shift >= num_bits) {
+      for (unsigned i = 0; i < num_bits; ++i) {
+        result.push_back(ctx.bool_val(false));
+      }
+    } else {
+      for (unsigned i = shift; i < num_bits; ++i) {
+        result.push_back(lhs[i]);
+      }
+      for (unsigned i = 0; i < shift; ++i) {
+        result.push_back(ctx.bool_val(false));
+      }
+    }
+  } else {
+    // shift according to each bit
+    z3::expr_vector rhs(ctx);
+    visitLogicBitLevel(
+      e.arg(1), rhs, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+    z3::expr_vector out_bits = lhs;
+    unsigned i = 0;
+    for (; i < num_bits; ++i) {
+      unsigned shift = 1 << i;
+      if (shift >= num_bits) {
+        break;
+      }
+      z3::expr_vector new_out_bits(ctx);
+      for (unsigned j = 0; j < num_bits; ++j) {
+        z3::expr bit = ctx.bool_val(false);
+        if (shift + j < num_bits) {
+          bit = out_bits[shift + j];
+        }
+        // if rhs[i] is 1, then we do shift; otherwise we just keep the original bit
+        new_out_bits.push_back((rhs[i] && bit) || ((!rhs[i]) && out_bits[j]));
+      }
+      out_bits = new_out_bits;
+    }
+    // if any upper bits is set to 1, the result is 0
+    z3::expr larger = ctx.bool_val(false);
+    for (; i < num_bits; ++i) {
+      larger = (larger || rhs[i]);
+    }
+    for (i = 0; i < num_bits; ++i) {
+      result.push_back((larger && ctx.bool_val(false)) || ((!larger) && out_bits[i]));
+    }
+  }
+}
+
+ImplVisitLogicOperator(BASHR) {
+  z3::expr_vector lhs(ctx);
+  auto num_bits = e.get_sort().bv_size();
+  visitLogicBitLevel(
+    e.arg(0), lhs, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  z3::expr sign_bit = lhs.back();
+  if (e.arg(1).is_numeral()) {
+    unsigned shift = e.arg(1).get_numeral_uint();
+    if (shift >= num_bits) {
+      for (unsigned i = 0; i < num_bits; ++i) {
+        result.push_back(sign_bit);
+      }
+    } else {
+      for (unsigned i = shift; i < num_bits; ++i) {
+        result.push_back(lhs[i]);
+      }
+      for (unsigned i = 0; i < shift; ++i) {
+        result.push_back(sign_bit);
+      }
+    }
+  } else {
+    // shift according to each bit
+    z3::expr_vector rhs(ctx);
+    visitLogicBitLevel(
+      e.arg(1), rhs, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+    z3::expr_vector out_bits = lhs;
+    unsigned i = 0;
+    for (; i < num_bits; ++i) {
+      unsigned shift = 1 << i;
+      if (shift >= num_bits) {
+        break;
+      }
+      z3::expr_vector new_out_bits(ctx);
+      for (unsigned j = 0; j < num_bits; ++j) {
+        z3::expr bit = sign_bit;
+        if (shift + j < num_bits) {
+          bit = out_bits[shift + j];
+        }
+        // if rhs[i] is 1, then we do shift; otherwise we just keep the original bit
+        new_out_bits.push_back((rhs[i] && bit) || ((!rhs[i]) && out_bits[j]));
+      }
+      out_bits = new_out_bits;
+    }
+    // if any upper bits is set to 1, the result is all-sign-bits
+    z3::expr larger = ctx.bool_val(false);
+    for (; i < num_bits; ++i) {
+      larger = (larger || rhs[i]);
+    }
+    for (i = 0; i < num_bits; ++i) {
+      result.push_back((larger && sign_bit) || ((!larger) && out_bits[i]));
+    }
+  }
+}
+
 ImplVisitLogicOperator(BMUL) {
   assert(e.num_args() == 2);
   auto left = e.arg(0);
@@ -1044,6 +1162,22 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
         }
         case Z3_OP_ZERO_EXT: {
           visitLogicZERO_EXT(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_SIGN_EXT: {
+          visitLogicSIGN_EXT(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        // bv shift
+        case Z3_OP_BLSHR: {
+          visitLogicBLSHR(
+            e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+          break;
+        }
+        case Z3_OP_BASHR: {
+          visitLogicBASHR(
             e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
           break;
         }
@@ -1565,7 +1699,8 @@ bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
     Z3_OP_AND, Z3_OP_OR, Z3_OP_XOR, Z3_OP_NOT,
     Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT,
     Z3_OP_BAND, Z3_OP_BOR, Z3_OP_BNOT,
-    Z3_OP_CONCAT, Z3_OP_EXTRACT, Z3_OP_ZERO_EXT,
+    Z3_OP_CONCAT, Z3_OP_EXTRACT, Z3_OP_ZERO_EXT, Z3_OP_SIGN_EXT,
+    Z3_OP_BLSHR, Z3_OP_BASHR,
     Z3_OP_BMUL, Z3_OP_BADD, Z3_OP_BSUB, Z3_OP_BUDIV, Z3_OP_BUDIV_I,
     Z3_OP_ITE
   };

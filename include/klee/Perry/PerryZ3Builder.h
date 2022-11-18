@@ -86,6 +86,10 @@ private:
   DefVisitLogicOperator(CONCAT);
   DefVisitLogicOperator(EXTRACT);
   DefVisitLogicOperator(ZERO_EXT);
+  DefVisitLogicOperator(SIGN_EXT);
+  // bv shift
+  DefVisitLogicOperator(BLSHR);
+  DefVisitLogicOperator(BASHR);
   // bv arith
   DefVisitLogicOperator(BMUL);
   DefVisitLogicOperator(BADD);
