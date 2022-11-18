@@ -1518,7 +1518,34 @@ void PerryZ3Builder::
 getBitLevelExpr(const ref<PerryExpr> &expr, z3::expr_vector &out) {
   z3::expr z3expr = toZ3Expr(expr);
   z3expr = z3expr.simplify();
-  visitBitLevel(z3expr, out);
+  z3::expr_vector res(ctx);
+  z3::expr_vector bool_vars(ctx);
+  z3::expr_vector orig(ctx);
+  std::map<unsigned, unsigned> bv_id_to_idx;
+  std::map<unsigned, unsigned> bool_id_to_idx;
+  unsigned cnt = 0;
+  visitLogicBitLevel(
+    z3expr, res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  unsigned num_bits = res.size();
+  const std::set<SymRead> &SR = std::set<SymRead>();
+  for (unsigned i = 0; i < num_bits; ++i) {
+    auto logic_expr = res[i].simplify();
+    if (logic_expr.is_true() || logic_expr.is_false()) {
+      out.push_back(logic_expr);
+    } else {
+      logic_expr = simplifyLogicExpr(logic_expr);
+      logic_expr = logic_expr.simplify();
+      auto ret = reconstructExpr(
+        logic_expr, orig, bool_id_to_idx, "", SR, false, true);
+      assert(ret.size() <= 1);
+      if (ret.size() == 1) {
+        out.push_back(ret[0].simplify());
+      } else {
+        out.push_back(ctx.bool_val(true));
+      }
+    }
+  }
+  // visitBitLevel(z3expr, out);
 }
 
 z3::expr_vector PerryZ3Builder::
@@ -1552,9 +1579,9 @@ inferBitLevelConstraintInternal(const z3::expr &in_cs, const SymRead &SR,
     z3::expr ble = bit_level_expr[i];
     int one_or_zero;
     bool skip;
-    if (ble.is_numeral()) {
+    if (ble.is_true() || ble.is_false()) {
       if (contain_concrete) {
-        one_or_zero = (ble.get_numeral_uint() == 0) ? 0 : 1;
+        one_or_zero = (ble.is_false()) ? 0 : 1;
         auto exp = (target_expr.extract(i, i) == one_or_zero);
         skip = false;
         for (auto e : blacklist) {
@@ -1571,7 +1598,7 @@ inferBitLevelConstraintInternal(const z3::expr &in_cs, const SymRead &SR,
     }
     bool could_be_true;
     bool could_be_false;
-    s.add(ble == 1);
+    s.add(ble);
     if (s.check() == z3::sat) {
       could_be_true = true;
     } else {
@@ -1580,7 +1607,7 @@ inferBitLevelConstraintInternal(const z3::expr &in_cs, const SymRead &SR,
     s.pop();
     s.push();
 
-    s.add(ble == 0);
+    s.add(!ble);
     if (s.check() == z3::sat) {
       could_be_false = true;
     } else {
