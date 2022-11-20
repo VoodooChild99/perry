@@ -88,6 +88,7 @@ private:
   DefVisitLogicOperator(ZERO_EXT);
   DefVisitLogicOperator(SIGN_EXT);
   // bv shift
+  DefVisitLogicOperator(BSHL);
   DefVisitLogicOperator(BLSHR);
   DefVisitLogicOperator(BASHR);
   // bv arith
