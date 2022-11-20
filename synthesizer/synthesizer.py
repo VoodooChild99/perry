@@ -393,6 +393,7 @@ class Synthesizer:
     self.offset_to_reg = {}
     if self.target is not None:
       regs: List[SVDRegister] = self.target.registers
+      reg_name_regex = re.compile(r'(.*)\[(\d+)\]$')
       # idx = 0
       for r in regs:
         # if r._size != 0x20:
@@ -401,6 +402,10 @@ class Synthesizer:
         #   sys.exit(2)
         if r.address_offset not in self.offset_to_reg:
           self.offset_to_reg[r.address_offset] = r
+        
+        reg_name_matched = reg_name_regex.match(r.name)
+        if reg_name_matched:
+          r.name = "{}_{}".format(reg_name_matched.group(1), reg_name_matched.group(2))
         # if (r.address_offset >> 2) != idx and self.has_data_reg:
         #   print("In {}, the index of register {} is not continuous, "
         #         "which is not supported by now.".format(target, r.name))
