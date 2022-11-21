@@ -93,6 +93,12 @@ public:
     return ret;
   }
 
+  static ref<PerryExpr> alloc(unsigned num_bits, uint64_t val) {
+    ref<PerryConstantExpr> ret(new PerryConstantExpr(num_bits, val));
+    ret->computeHash();
+    return ret;
+  }
+
   Expr::Kind getKind() const { return Expr::Constant; }
 
   Expr::Width getWidth() const { return value.getBitWidth(); }
@@ -153,6 +159,7 @@ private:
   llvm::APInt value;
   PerryConstantExpr(const llvm::APInt &v) : value(v) {}
   PerryConstantExpr(const ConstantExpr *CE) : value(CE->getAPValue()) {}
+  PerryConstantExpr(unsigned num_bits, uint64_t val) : value(num_bits, val) {}
 };
 
 class PerryReadExpr : public PerryExpr {
