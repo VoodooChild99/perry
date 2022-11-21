@@ -39,6 +39,10 @@ klee-run.sh
 synthesizer/venv
 synthesizer/__pycache__
 synthesizer/test
+synthesizer/log*
+synthesizer/perry-*.json
+synthesizer/old-results
+synthesizer/example/*/loops.yaml
 
 profile
 klee-out-*
