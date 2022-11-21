@@ -1705,6 +1705,62 @@ Executor::toConstant(ExecutionState &state,
   return value;
 }
 
+ref<klee::ConstantExpr> 
+Executor::toConstantClean(ExecutionState &state, ref<Expr> e) {
+  e = ConstraintManager::simplifyExpr(state.constraints, e);
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(e))
+    return CE;
+
+  ref<ConstantExpr> value;
+  bool success =
+      solver->getValue(state.constraints, e, value, state.queryMetaData);
+  assert(success && "FIXME: Unhandled solver failure");
+  (void) success;
+
+  return value;
+}
+
+std::vector<ref<klee::ConstantExpr>>
+Executor::enumConstant(ExecutionState &state, ref<Expr> e) {
+  std::vector<ref<ConstantExpr>> ret;
+  e = ConstraintManager::simplifyExpr(state.constraints, e);
+  if (ConstantExpr *CE = dyn_cast<ConstantExpr>(e)) {
+    ret.push_back(ref<ConstantExpr>(CE));
+    return ret;
+  }
+
+  const unsigned THRESHOLD = 32;
+  unsigned cnt = 0;
+  ConstraintSet initialConstraint(state.constraints);
+  ConstraintManager cm(initialConstraint);
+  ref<Expr> newCS;
+  while (true) {
+    bool res;
+    if (newCS) {
+      bool success
+        = solver->mayBeTrue(initialConstraint, newCS, res, state.queryMetaData);
+      assert(success && "FIXME: Unhandled solver failure");
+      if (!res) {
+        break;
+      }
+      cm.addConstraint(newCS);
+    }
+    ref<ConstantExpr> value;
+    bool success =
+      solver->getValue(initialConstraint, e, value, state.queryMetaData);
+    assert(success && "FIXME: Unhandled solver failure");
+
+    ret.push_back(value);
+    newCS = NeExpr::create(e, value);
+    cnt += 1;
+    if (cnt >= THRESHOLD) {
+      break;
+    }
+  }
+
+  return ret;
+}
+
 void Executor::executeGetValue(ExecutionState &state,
                                ref<Expr> e,
                                KInstruction *target) {
@@ -4831,8 +4887,19 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       return;
     }
 
+    std::vector<ref<ConstantExpr>> constRegIdx;
     if (inBounds) {
       const ObjectState *os = op.second;
+      if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+        if (!isa<ConstantExpr>(offset)) {
+          uint64_t tmp_offset = 0;
+          toConstantClean(state, offset)->toMemory(&tmp_offset);
+          if (isRegOp(state, os, tmp_offset)) {
+            // concretize symbolic register access
+            constRegIdx = enumConstant(state, offset);
+          } 
+        }
+      }
       if (isWrite) {
         if (os->readOnly) {
           terminateStateOnError(state, "memory error: object read only",
@@ -4853,53 +4920,165 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             value = old_val;
           }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
-          bool is_reg_write = false;
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+            bool is_reg_write = false;
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
-            toConstant(state, offset, "[fast path] write taint must be concrete")
+            if (constRegIdx.size() > 1) {
+              // create multiple states
+              unsigned num_const = constRegIdx.size() - 1;
+              ExecutionState *cur = &state;
+              unsigned i = 0;
+              for (; i < num_const; ++i) {
+                if (!cur) {
+                  break;
+                }
+                StatePair branches
+                  = fork(*cur, EqExpr::create(offset, constRegIdx[i]), true,
+                         BranchType::MemOp);
+                if (branches.first) {
+                  cur = branches.first;
+                  wos = cur->addressSpace.getWriteable(mo, os);
+                  offset_concrete = 0;
+                  constRegIdx[i]->toMemory(&offset_concrete);
+                  for (unsigned int j = 0; j < type / 8; ++j) {
+                    wos->writeTaint(offset_concrete + j, *ts);
+                  }
+                  is_reg_write = isRegOp(*cur, wos, offset_concrete);
+                  if (is_reg_write) {
+                    logRegOp(perryExprManager, *cur, wos, offset_concrete,
+                             type, value, true, ts);
+                  }
+                  if (!is_reg_write) {
+                    wos->write(offset, value);
+                  }
+                }
+                cur = branches.second;
+              }
+              if (cur) {
+                addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+                wos = cur->addressSpace.getWriteable(mo, os);
+                offset_concrete = 0;
+                constRegIdx[i]->toMemory(&offset_concrete);
+                for (unsigned int j = 0; j < type / 8; ++j) {
+                  wos->writeTaint(offset_concrete + j, *ts);
+                }
+                is_reg_write = isRegOp(*cur, wos, offset_concrete);
+                if (is_reg_write) {
+                  logRegOp(perryExprManager, *cur, wos, offset_concrete,
+                            type, value, true, ts);
+                }
+                if (!is_reg_write) {
+                  wos->write(offset, value);
+                }
+              }
+            } else {
+              toConstant(state, offset, "[fast path] write taint must be concrete")
               ->toMemory(&offset_concrete);
-            for (unsigned int i = 0; i < type / 8; ++i) {
-              wos->writeTaint(offset_concrete + i, *ts);
+              for (unsigned int i = 0; i < type / 8; ++i) {
+                wos->writeTaint(offset_concrete + i, *ts);
+              }
+              is_reg_write = isRegOp(state, wos, offset_concrete);
+              if (is_reg_write) {
+                logRegOp(perryExprManager, state, wos, offset_concrete,
+                        type, value, true, ts);
+              }
+              if (!is_reg_write) {
+                wos->write(offset, value);
+              }
             }
-            is_reg_write = isRegOp(state, wos, offset_concrete);
-            if (is_reg_write) {
-              logRegOp(perryExprManager, state, wos, offset_concrete,
-                       type, value, true, ts);
-            }
-          }
-          // wos->write(offset, value);
-          if (!is_reg_write) {
+          } else {
             wos->write(offset, value);
           }
         }
-      } else {
-        ref<Expr> result = os->read(offset, type);
-        
-        if (interpreterOpts.MakeConcreteSymbolic)
-          result = replaceReadWithSymbolic(state, result);
-        
+      } else {        
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
           TaintSet t = *ts;
           uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
-          toConstant(state, offset, "[fast path] read taint must be concrete")
-            ->toMemory(&offset_concrete);
-          for (unsigned int i = 0; i < type / 8; ++i) {
-            TaintSet *rt = os->readTaint(offset_concrete + i);
-            if (rt) {
-              mergeTaint(t, *rt);
+          if (constRegIdx.size() > 1) {
+            // create multiple states
+            unsigned num_const = constRegIdx.size() - 1;
+            ExecutionState *cur = &state;
+            unsigned i = 0;
+            for (; i < num_const; ++i) {
+              if (!cur) {
+                break;
+              }
+              StatePair branches
+                = fork(*cur, EqExpr::create(offset, constRegIdx[i]), true,
+                       BranchType::MemOp);
+              if (branches.first) {
+                cur = branches.first;
+                offset_concrete = 0;
+                constRegIdx[i]->toMemory(&offset_concrete);
+                ref<Expr> result = os->read(offset_concrete, type);
+                for (unsigned int j = 0; j < type / 8; ++j) {
+                  TaintSet *rt = os->readTaint(offset_concrete + j);
+                  if (rt) {
+                    mergeTaint(t, *rt);
+                  }
+                }
+                if (isRegOp(*cur, os, offset_concrete)) {
+                  logRegOp(perryExprManager, *cur, os, offset_concrete,
+                           type, result, false, nullptr, target->inst);
+                }
+                if (do_bitband) {
+                  result = ZExtExpr::create(result, orig_type);
+                }
+                bindLocal(target, *cur, result, &t);
+              }
+              cur = branches.second;
             }
+            if (cur) {
+              addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+              offset_concrete = 0;
+              constRegIdx[i]->toMemory(&offset_concrete);
+              ref<Expr> result = os->read(offset_concrete, type);
+              for (unsigned int j = 0; j < type / 8; ++j) {
+                TaintSet *rt = os->readTaint(offset_concrete + j);
+                if (rt) {
+                  mergeTaint(t, *rt);
+                }
+              }
+              if (isRegOp(*cur, os, offset_concrete)) {
+                logRegOp(perryExprManager, *cur, os, offset_concrete,
+                         type, result, false, nullptr, target->inst);
+              }
+              if (do_bitband) {
+                result = ZExtExpr::create(result, orig_type);
+              }
+              bindLocal(target, *cur, result, &t);
+            }
+          } else {
+            ref<Expr> result = os->read(offset, type);
+        
+            if (interpreterOpts.MakeConcreteSymbolic)
+              result = replaceReadWithSymbolic(state, result);
+            
+            toConstant(state, offset, "[fast path] read taint must be concrete")
+              ->toMemory(&offset_concrete);
+            for (unsigned int i = 0; i < type / 8; ++i) {
+              TaintSet *rt = os->readTaint(offset_concrete + i);
+              if (rt) {
+                mergeTaint(t, *rt);
+              }
+            }
+            if (isRegOp(state, os, offset_concrete)) {
+              logRegOp(perryExprManager, state, os, offset_concrete,
+                      type, result, false, nullptr, target->inst);
+            }
+            if (do_bitband) {
+              result = ZExtExpr::create(result, orig_type);
+            }
+            bindLocal(target, state, result, &t);
           }
-          if (isRegOp(state, os, offset_concrete)) {
-            logRegOp(perryExprManager, state, os, offset_concrete,
-                     type, result, false, nullptr, target->inst);
-          }
-          if (do_bitband) {
-            result = ZExtExpr::create(result, orig_type);
-          }
-          bindLocal(target, state, result, &t);
         } else {
+          ref<Expr> result = os->read(offset, type);
+        
+          if (interpreterOpts.MakeConcreteSymbolic)
+            result = replaceReadWithSymbolic(state, result);
+          
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
@@ -4945,6 +5124,16 @@ void Executor::executeMemoryOperation(ExecutionState &state,
 
       const ObjectState *os = op.second;
       offset = mo->getOffsetExpr(address);
+      if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+        if (!isa<ConstantExpr>(offset)) {
+          uint64_t tmp_offset = 0;
+          toConstantClean(state, offset)->toMemory(&tmp_offset);
+          if (isRegOp(state, os, tmp_offset)) {
+            // concretize symbolic register access
+            constRegIdx = enumConstant(state, offset);
+          } 
+        }
+      }
       if (isWrite) {
         if (os->readOnly) {
           terminateStateOnError(state, "memory error: object read only",
@@ -4965,53 +5154,163 @@ void Executor::executeMemoryOperation(ExecutionState &state,
             value = old_val;
           }
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
-          bool is_reg_write = false;
           if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
+            bool is_reg_write = false;
             uint64_t offset_concrete = 0;
             // TODO: support symbolic offset?
-            toConstant(state, offset, "[(fixed) fast path] write taint must be concrete")
-              ->toMemory(&offset_concrete);
-            for (unsigned int i = 0; i < type / 8; ++i) {
-              wos->writeTaint(offset_concrete + i, *ts);
+            if (constRegIdx.size() > 1) {
+              unsigned num_const = constRegIdx.size() - 1;
+              ExecutionState *cur = &state;
+              unsigned i = 0;
+              for (; i < num_const; ++i) {
+                if (!cur) {
+                  break;
+                }
+                StatePair branches
+                  = fork(*cur, EqExpr::create(offset, constRegIdx[i]), true,
+                         BranchType::MemOp);
+                if (branches.first) {
+                  cur = branches.first;
+                  wos = cur->addressSpace.getWriteable(mo, os);
+                  offset_concrete = 0;
+                  constRegIdx[i]->toMemory(&offset_concrete);
+                  for (unsigned int j = 0; j < type / 8; ++j) {
+                    wos->writeTaint(offset_concrete + j, *ts);
+                  }
+                  is_reg_write = isRegOp(*cur, wos, offset_concrete);
+                  if (is_reg_write) {
+                    logRegOp(perryExprManager, *cur, wos, offset_concrete,
+                             type, value, true, ts);
+                  }
+                  if (!is_reg_write) {
+                    wos->write(offset, value);
+                  }
+                }
+              }
+              if (cur) {
+                addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+                wos = cur->addressSpace.getWriteable(mo, os);
+                offset_concrete = 0;
+                constRegIdx[i]->toMemory(&offset_concrete);
+                for (unsigned int j = 0; j < type / 8; ++j) {
+                  wos->writeTaint(offset_concrete + j, *ts);
+                }
+                is_reg_write = isRegOp(*cur, wos, offset_concrete);
+                if (is_reg_write) {
+                  logRegOp(perryExprManager, *cur, wos, offset_concrete,
+                            type, value, true, ts);
+                }
+                if (!is_reg_write) {
+                  wos->write(offset, value);
+                }
+              }
+            } else {
+              toConstant(state, offset, "[(fixed) fast path] write taint must be concrete")
+                ->toMemory(&offset_concrete);
+              for (unsigned int i = 0; i < type / 8; ++i) {
+                wos->writeTaint(offset_concrete + i, *ts);
+              }
+              is_reg_write = isRegOp(state, wos, offset_concrete);
+              if (is_reg_write) {
+                logRegOp(perryExprManager, state, wos, offset_concrete,
+                        type, value, true, ts);
+              }
+              if (!is_reg_write) {
+                wos->write(offset, value);
+              }
             }
-            is_reg_write = isRegOp(state, wos, offset_concrete);
-            if (is_reg_write) {
-              logRegOp(perryExprManager, state, wos, offset_concrete,
-                       type, value, true, ts);
-            }
-          }
-          // wos->write(offset, value);
-          if (!is_reg_write) {
+          } else {
             wos->write(offset, value);
           }
         }
       } else {
-        ref<Expr> result = os->read(offset, type);
-        
-        if (interpreterOpts.MakeConcreteSymbolic)
-          result = replaceReadWithSymbolic(state, result);
-        
         if (ts && interpreterOpts.TaintOpt.match(TaintOption::DirectTaint)) {
           TaintSet t = *ts;
           uint64_t offset_concrete = 0;
           // TODO: support symbolic offset?
-          toConstant(state, offset, "[(fixed) fast path] read taint must be concrete")
-            ->toMemory(&offset_concrete);
-          for (unsigned int i = 0; i < type / 8; ++i) {
-            TaintSet *rt = os->readTaint(offset_concrete + i);
-            if (rt) {
-              mergeTaint(t, *rt);
+          if (constRegIdx.size() > 1) {
+            // create multiple states
+            unsigned num_const = constRegIdx.size() - 1;
+            ExecutionState *cur = &state;
+            unsigned i = 0;
+            for (; i < num_const; ++i) {
+              if (!cur) {
+                break;
+              }
+              StatePair branches
+                = fork(*cur, EqExpr::create(offset, constRegIdx[i]), true,
+                       BranchType::MemOp);
+              if (branches.first) {
+                cur = branches.first;
+                offset_concrete = 0;
+                constRegIdx[i]->toMemory(&offset_concrete);
+                ref<Expr> result = os->read(offset_concrete, type);
+                for (unsigned int j = 0; j < type / 8; ++j) {
+                  TaintSet *rt = os->readTaint(offset_concrete + j);
+                  if (rt) {
+                    mergeTaint(t, *rt);
+                  }
+                }
+                if (isRegOp(*cur, os, offset_concrete)) {
+                  logRegOp(perryExprManager, *cur, os, offset_concrete,
+                           type, result, false, nullptr, target->inst);
+                }
+                if (do_bitband) {
+                  result = ZExtExpr::create(result, orig_type);
+                }
+                bindLocal(target, *cur, result, &t);
+              }
+              cur = branches.second;
             }
+            if (cur) {
+              addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+              offset_concrete = 0;
+              constRegIdx[i]->toMemory(&offset_concrete);
+              ref<Expr> result = os->read(offset_concrete, type);
+              for (unsigned int j = 0; j < type / 8; ++j) {
+                TaintSet *rt = os->readTaint(offset_concrete + j);
+                if (rt) {
+                  mergeTaint(t, *rt);
+                }
+              }
+              if (isRegOp(*cur, os, offset_concrete)) {
+                logRegOp(perryExprManager, *cur, os, offset_concrete,
+                         type, result, false, nullptr, target->inst);
+              }
+              if (do_bitband) {
+                result = ZExtExpr::create(result, orig_type);
+              }
+              bindLocal(target, *cur, result, &t);
+            }
+          } else {
+            ref<Expr> result = os->read(offset, type);
+        
+            if (interpreterOpts.MakeConcreteSymbolic)
+              result = replaceReadWithSymbolic(state, result);
+
+            toConstant(state, offset, "[(fixed) fast path] read taint must be concrete")
+              ->toMemory(&offset_concrete);
+            for (unsigned int i = 0; i < type / 8; ++i) {
+              TaintSet *rt = os->readTaint(offset_concrete + i);
+              if (rt) {
+                mergeTaint(t, *rt);
+              }
+            }
+            if (isRegOp(state, os, offset_concrete)) {
+              logRegOp(perryExprManager, state, os, offset_concrete,
+                      type, result, false, nullptr, target->inst);
+            }
+            if (do_bitband) {
+              result = ZExtExpr::create(result, orig_type);
+            }
+            bindLocal(target, state, result, &t);
           }
-          if (isRegOp(state, os, offset_concrete)) {
-            logRegOp(perryExprManager, state, os, offset_concrete,
-                     type, result, false, nullptr, target->inst);
-          }
-          if (do_bitband) {
-            result = ZExtExpr::create(result, orig_type);
-          }
-          bindLocal(target, state, result, &t);
         } else {
+          ref<Expr> result = os->read(offset, type);
+        
+          if (interpreterOpts.MakeConcreteSymbolic)
+            result = replaceReadWithSymbolic(state, result);
+
           if (do_bitband) {
             result = ZExtExpr::create(result, orig_type);
           }
