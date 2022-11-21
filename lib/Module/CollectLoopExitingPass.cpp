@@ -9,9 +9,9 @@ void CollectLoopExitingPass::handleLoop(Loop *L) {
   for (auto SL : L->getSubLoops()) {
     handleLoop(SL);
   }
-  SmallVector<BasicBlock*, 4> sv;
-  L->getExitingBlocks(sv);
-  for (auto EB: sv) {
+  // SmallVector<BasicBlock*, 4> sv;
+  // L->getExitingBlocks(sv);
+  for (auto EB: L->getBlocks()) {
     loopExitingBlocks.insert(EB);
   }
 }
