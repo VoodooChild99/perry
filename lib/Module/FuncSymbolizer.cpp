@@ -5,6 +5,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/Constants.h"
 
 #include <stack>
 
@@ -98,9 +99,53 @@ symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
 
 void FuncSymbolizePass::
 symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
+  // filter out UBSAN globals
+  std::set<GlobalVariable*> UBSanGlobals;
+  unsigned num_ubsan_globals = 0;
+  while (true) {
+    for (auto &G : M.globals()) {
+      if (G.isConstant()) {
+        continue;
+      }
+      for (auto U : G.users()) {
+        // 1) the user is also a global, and the user is used by a UBSAN global
+        if (isa<GlobalVariable>(U) &&
+            (UBSanGlobals.find(&G) != UBSanGlobals.end())) {
+          UBSanGlobals.insert(cast<GlobalVariable>(U));
+        }
+        // 2) the user is a CallInst, and the called function is a UBSAN handler
+        if (ConstantExpr *CE = dyn_cast<ConstantExpr>(U)) {
+          if (!CE->isCast()) {
+            continue;
+          }
+          auto destTy = CE->getType();
+          if (destTy->isPointerTy() &&
+              destTy->getPointerElementType()->isIntegerTy(8)) {
+            if (CE->hasOneUser()) {
+              auto CEU = *(CE->user_begin());
+              if (CallInst *CI = dyn_cast<CallInst>(CEU)) {
+                if (CI->getCalledFunction()
+                    ->getName().startswith("__ubsan_handle_")) {
+                  UBSanGlobals.insert(&G);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (num_ubsan_globals != UBSanGlobals.size()) {
+      num_ubsan_globals = UBSanGlobals.size();
+    } else {
+      break;
+    }
+  }
   int gIdx = 0;
   for (auto &G : M.globals()) {
     if (G.isConstant()) {
+      continue;
+    }
+    if (UBSanGlobals.find(&G) != UBSanGlobals.end()) {
       continue;
     }
     auto valueType = G.getValueType();
