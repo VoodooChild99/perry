@@ -154,6 +154,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_get_taint_internal", handleGetTaintInternal, false),
   add("klee_get_return_value", handleGetReturnValue, false),
   add("__assert_func", handleAssertFunc, false),
+  add("__ubsan_handle_out_of_bounds", handleOOB, false),
 
 #undef addDNR
 #undef add
@@ -1318,4 +1319,12 @@ handleGetReturnValue(ExecutionState &state, KInstruction *target,
   
   state.retVal = CE_val->getZExtValue();
   return;
+}
+
+void SpecialFunctionHandler::
+handleOOB(ExecutionState &state, KInstruction *target,
+          std::vector<ref<Expr>> &arguments)
+{
+  executor.terminateStateOnError(state, "Array OOB access",
+                                 StateTerminationType::Assert);
 }
