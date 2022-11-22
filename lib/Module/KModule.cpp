@@ -519,7 +519,6 @@ void KModule::manifestNoOutput() {
   for (auto &Function : *module) {
     if (Function.isDeclaration()) {
       declarations.push_back(&Function);
-      continue;
     }
 
     auto kf = std::unique_ptr<KFunction>(new KFunction(&Function, this));
@@ -565,10 +564,6 @@ void KModule::outputManifest(InterpreterHandler *ih, bool forceSourceOutput){
 
   if (OutputModule) {
     std::unique_ptr<llvm::raw_fd_ostream> f(ih->openOutputFile("final.bc"));
-#if LLVM_VERSION_CODE >= LLVM_VERSION(7, 0)
     WriteBitcodeToFile(*module, *f);
-#else
-    WriteBitcodeToFile(module.get(), *f);
-#endif
   }
 }
