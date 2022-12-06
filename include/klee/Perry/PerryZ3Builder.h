@@ -55,8 +55,22 @@ public:
   inferBitLevelConstraintWithBlacklist(const z3::expr &in_cs, const SymRead &SR,
                                        const z3::expr_vector &blacklist,
                                        z3::expr_vector &bit_level_expr);
+  
+  // expressing `target` using a linear formula of the form `c1 * expr + c2` satifying:
+  // `pre_cond \implies \forall var \in expr cond[target -> (c1 * expr + c2)]`
+  // it's assumed that 
+  z3::expr synthesizeLinearFormula(const z3::expr &pre_cond,
+                                   const z3::expr &cond,
+                                   const z3::expr &target,
+                                   const z3::expr &common_expr,
+                                   const z3::expr &new_symbol,
+                                   bool &success);
+  z3::expr getSym(unsigned width);
 
   z3::context &getContext() { return ctx; };
+  // returns true if `a` contains b
+  bool contains(const z3::expr &a, const z3::expr &b);
+  bool contains_bv_const(const z3::expr &a, const std::string &name, bool full);
 private:
   z3::expr simplifyLogicExpr(const z3::expr &original);
   void visitBitLevel(const z3::expr &e, z3::expr_vector &result);
@@ -133,6 +147,13 @@ private:
                                   bool preserve_all);
 
   bool containsUnsupportedExpr(const z3::expr &e);
+  void ifContainVisit(std::set<unsigned> &visited, bool &result,
+                      const z3::expr &a, const z3::expr &b);
+  void extractAllConstantVisit(std::set<unsigned> &visited,
+                               z3::expr_vector &result, const z3::expr &a);
+  void ifContainBvConstVisit(std::set<unsigned> &visited, bool &result,
+                             const z3::expr &a, const std::string &name,
+                             bool full);
   z3::context ctx;
   const std::regex NameRegex;
 };

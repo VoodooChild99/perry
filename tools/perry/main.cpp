@@ -1864,6 +1864,27 @@ static int findLastIn(const PerryTrace::Constraints &of,
   return -1;
 }
 
+static bool contains(const std::vector<ref<PerryExpr>> &a,
+                     const ref<PerryExpr> &b) {
+  std::deque<ref<PerryExpr>> WL;
+  for (auto &e : a) {
+    WL.push_back(e);
+  }
+  while (!WL.empty()) {
+    auto cur = WL.front();
+    WL.pop_front();
+    if (cur == b) {
+      return true;
+    } else {
+      unsigned num_kids = cur->getNumKids();
+      for (unsigned i = 0; i < num_kids; ++i) {
+        WL.push_back(cur->getKid(i));
+      }
+    }
+  }
+  return false;
+}
+
 static void
 inferWRDependence(const PerryTrace::PerryTraceItem &PTI,
                   const PerryTrace::PerryTraceItem &last_PTI,
@@ -2533,6 +2554,39 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           bit_constraints_key = bit_constraints_key.simplify();
           reset_constraint_key = true;
         }
+      }
+      if (bit_constraints_key.is_true() && final_val_constraint.is_true()) {
+        if (contains(key.first.constraints, val.after)) {
+          // Neither the condition nor the action can be inferred, but the action
+          // can be expressed using the condition. We try to synthesize a linear
+          // formula of the form `conditon = c1 * action + c2` using z3.
+          z3::expr key_read = z3builder.toZ3Expr(PerryReadExpr::alloc(
+            key.first.sym.name,
+            PerryConstantExpr::alloc(key.first.sym.width, key.first.sym.idx),
+            key.first.sym.width));
+          z3::expr val_read = z3builder.toZ3Expr(PerryReadExpr::alloc(
+            val.sym.name,
+            PerryConstantExpr::alloc(val.sym.width, val.sym.idx),
+            val.sym.width));
+          bool success = false;
+          auto new_symbol = z3builder.getSym(val.sym.width);
+          auto res = z3builder.synthesizeLinearFormula(
+            z3builder.toZ3ExprAnd(key.first.constraints_added),
+            z3builder.toZ3ExprAnd(key.first.constraints),
+            key_read, z3builder.toZ3Expr(val.after), new_symbol, success);
+          if (success) {
+            final_val_constraint = (val_read == new_symbol);
+            bit_constraints_key = (key_read == res);
+          }
+        }
+      }
+      if (!bit_constraints_key.is_true() && final_val_constraint.is_true()) {
+        // the condition can be inferred, but the corresponding action cannot
+        z3::expr val_read = z3builder.toZ3Expr(PerryReadExpr::alloc(
+            val.sym.name,
+            PerryConstantExpr::alloc(val.sym.width, val.sym.idx),
+            val.sym.width));
+        final_val_constraint = (val_read == z3builder.getSym(val.sym.width));
       }
       if (wr_expr_id_to_idx.find(final_val_constraint.id()) ==
           wr_expr_id_to_idx.end())

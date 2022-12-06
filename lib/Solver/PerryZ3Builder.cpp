@@ -1809,3 +1809,151 @@ bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
   }
   return false;
 }
+
+void PerryZ3Builder::
+ifContainVisit(std::set<unsigned> &visited, bool &result,
+               const z3::expr &src, const z3::expr &target) {
+  if (visited.find(src.id()) != visited.end()) {
+    return;
+  }
+  visited.insert(src.id());
+  if (src.id() == target.id()) {
+    result = true;
+    return;
+  }
+  for (auto arg : src.args()) {
+    ifContainVisit(visited, result, arg, target);
+  }
+}
+
+void PerryZ3Builder::
+ifContainBvConstVisit(std::set<unsigned> &visited, bool &result,
+                      const z3::expr &a, const std::string &name, bool full) {
+  if (visited.find(a.id()) != visited.end()) {
+    return;
+  }
+  visited.insert(a.id());
+  if (a.is_const() && !a.is_numeral()) {
+    std::string decl_name = a.decl().name().str();
+    if (full) {
+      if (decl_name == name) {
+        result = true;
+        return;
+      }
+    } else {
+      // prefix
+      if (decl_name.find(name) == 0) {
+        result = true;
+        return;
+      }
+    }
+  }
+  for (auto arg : a.args()) {
+    ifContainBvConstVisit(visited, result, arg, name, full);
+  }
+}
+
+bool PerryZ3Builder::contains(const z3::expr &a, const z3::expr &b) {
+  std::set<unsigned> visited;
+  bool result = false;
+  ifContainVisit(visited, result, a, b);
+  return result;
+}
+
+bool PerryZ3Builder::
+contains_bv_const(const z3::expr &a, const std::string &name, bool full) {
+  std::set<unsigned> visited;
+  bool result = false;
+  ifContainBvConstVisit(visited, result, a, name, full);
+  return result;
+}
+
+void PerryZ3Builder::
+extractAllConstantVisit(std::set<unsigned> &visited,
+                        z3::expr_vector &result, const z3::expr &a) {
+  if (visited.find(a.id()) != visited.end()) {
+    return;
+  }
+  visited.insert(a.id());
+  if (a.is_const() && !a.is_numeral()) {
+    result.push_back(a);
+    return;
+  }
+  for (auto arg : a.args()) {
+    extractAllConstantVisit(visited, result, arg);
+  }
+}
+
+z3::expr PerryZ3Builder::
+synthesizeLinearFormula(const z3::expr &pre_cond, const z3::expr &cond,
+                        const z3::expr &target, const z3::expr &common_expr,
+                        const z3::expr &new_symbol, bool &success) {
+  z3::expr c1 = ctx.bv_const("lf_c1", target.get_sort().bv_size());
+  z3::expr c2 = ctx.bv_const("lf_c2", target.get_sort().bv_size());
+  z3::expr linear_formula = (c1 * common_expr + c2);
+  z3::expr_vector src(ctx);
+  z3::expr_vector dst(ctx);
+  src.push_back(target);
+  dst.push_back(linear_formula);
+  // try split target
+  std::smatch m;
+  auto target_name = target.decl().name().str();
+  std::regex_search(target_name, m, NameRegex);
+  assert(m.size() == 4);
+  auto _width = std::stoi(m.str(3));
+  if (_width > 8) {
+    assert((_width & 7) == 0);
+    auto _offset = std::stoi(m.str(2));
+    unsigned num_bytes = (_width >> 3);
+    std::string bv_name = "";
+    for (unsigned i = 0; i < num_bytes; ++i) {
+      bv_name = m.str(1) + ":" + std::to_string(_offset + i) + ":8";
+      src.push_back(ctx.bv_const(bv_name.c_str(), 8));
+      dst.push_back(linear_formula.extract((i << 3) + 7, i << 3));
+      bv_name.clear();
+    }
+  }
+  // then substitute
+  z3::expr _cond = cond;
+  z3::expr new_cond = _cond.substitute(src, dst);
+  z3::expr_vector vars(ctx);
+  std::set<unsigned> visited;
+  extractAllConstantVisit(visited, vars, common_expr);
+  success = false;
+  if (vars.empty()) {
+    return ctx.bool_val(true);
+  }
+  z3::expr cs = z3::implies(pre_cond, new_cond);
+  z3::expr query = z3::forall(vars, cs);
+  z3::solver s(ctx);
+  s.add(query);
+  auto res = s.check();
+  if (res == z3::sat) {
+    success = true;
+    auto m = s.get_model();
+    unsigned num_const = m.num_consts();
+    z3::expr ret = new_symbol;
+    for (unsigned i = 0; i < num_const; ++i) {
+      auto decl = m.get_const_decl(i);
+      auto decl_name = decl.name().str();
+      if (decl_name == "lf_c1") {
+        auto decl_interp = m.get_const_interp(decl);
+        if (decl_interp.is_numeral()) {
+          ret = decl_interp * ret;
+        }
+      } else if (decl_name == "lf_c2") {
+        auto decl_interp = m.get_const_interp(decl);
+        if (decl_interp.is_numeral()) {
+          ret = ret + decl_interp;
+        }
+      }
+    }
+    return ret.simplify();
+  }
+  return ctx.bool_val(true);
+}
+
+z3::expr PerryZ3Builder::getSym(unsigned width) {
+  std::string bv_name = "tmp:0:" + std::to_string(width);
+  return ctx.bv_const(bv_name.c_str(), width);
+}
