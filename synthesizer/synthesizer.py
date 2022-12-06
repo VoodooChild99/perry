@@ -1226,10 +1226,14 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
           c_cond = self.__z3_expr_to_cond(pair[0], "value")
           c_action = self.__z3_expr_to_reg(pair[1], True)
           if len(c_action) > 0:
-            content += '\t\t\tif ({}) {{\n'.format(c_cond)
-            for ca in c_action:
-              content += '\t\t\t\t{}\n'.format(ca)
-            content += '\t\t\t}\n'
+            if len(c_cond) > 0:
+              content += '\t\t\tif ({}) {{\n'.format(c_cond)
+              for ca in c_action:
+                content += '\t\t\t\t{}\n'.format(ca)
+              content += '\t\t\t}\n'
+            else:
+              for ca in c_action:
+                content += '\t\t\t{}\n'.format(ca)
           
       if r.address_offset in self.irq_reg_offset:
         do_irq_update = True
