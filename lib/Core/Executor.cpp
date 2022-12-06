@@ -4919,6 +4919,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                          BranchType::MemOp);
                 if (branches.first) {
                   cur = branches.first;
+                  os = cur->addressSpace.findObject(mo);
                   wos = cur->addressSpace.getWriteable(mo, os);
                   offset_concrete = 0;
                   constRegIdx[i]->toMemory(&offset_concrete);
@@ -4938,6 +4939,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               }
               if (cur) {
                 addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+                os = cur->addressSpace.findObject(mo);
                 wos = cur->addressSpace.getWriteable(mo, os);
                 offset_concrete = 0;
                 constRegIdx[i]->toMemory(&offset_concrete);
@@ -5152,6 +5154,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                          BranchType::MemOp);
                 if (branches.first) {
                   cur = branches.first;
+                  os = cur->addressSpace.findObject(mo);
                   wos = cur->addressSpace.getWriteable(mo, os);
                   offset_concrete = 0;
                   constRegIdx[i]->toMemory(&offset_concrete);
@@ -5170,6 +5173,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
               }
               if (cur) {
                 addConstraint(*cur, EqExpr::create(offset, constRegIdx[i]));
+                os = cur->addressSpace.findObject(mo);
                 wos = cur->addressSpace.getWriteable(mo, os);
                 offset_concrete = 0;
                 constRegIdx[i]->toMemory(&offset_concrete);
