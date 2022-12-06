@@ -1379,8 +1379,20 @@ struct PerryLoopItemLoc {
   
   // returns true if `this` contains `IL`
   bool contains(unsigned line, unsigned col) const {
-    return (beginLine <= line && beginColumn <= col &&
-            endLine >= line && endColumn >= col);
+    if (line >= beginLine && line <= endLine) {
+      if (beginLine == endLine) {
+        return (col >= beginColumn && col <= endColumn);
+      } else {
+        if (line == beginLine) {
+          return col >= beginColumn;
+        } else if (line == endLine) {
+          return col <= endColumn;
+        }
+        return true;
+      }
+    } else {
+      return false;
+    }
   }
 };
 
