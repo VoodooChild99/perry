@@ -1004,8 +1004,9 @@ void SpecialFunctionHandler::handleSetTaint(ExecutionState &state,
       os->writeTaint(i + offset, ts);
     }
   } else {
-    executor.terminateStateOnUserError(state,
-        "Cannot resolve the address to be tainted");
+    klee_warning_once(
+      (void*)CE_addr->getZExtValue(),
+      "Cannot resolve the address to be tainted");
     return;
   }
 }
@@ -1060,7 +1061,8 @@ handleSetPersistTaint(ExecutionState &state, KInstruction *target,
     std::stringstream err_msg;
     err_msg << "Cannot resolve the address to be persistently tainted: "
             << std::hex << CE_addr->getZExtValue();
-    executor.terminateStateOnUserError(state, err_msg.str());
+    klee_warning_once((void*)CE_addr->getZExtValue(),
+                      "%s", err_msg.str().c_str());
     return;
   }
 }
