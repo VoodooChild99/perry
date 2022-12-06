@@ -1165,22 +1165,13 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
           }
           state.constraints.push_back(cs);
         }
-        bool must_be_false;
-        solver->setTimeout(timeout);
-        bool success = solver->mustBeFalse(state.constraints, Expr::createIsZero(condition), must_be_false,
-                                            state.queryMetaData);
-        solver->setTimeout(time::Span());
-        if (success && !must_be_false) {
-          addConstraint(state, Expr::createIsZero(condition));
-        } else {
-          klee_warning_once(B, "cannot fix program state, abort");
-          return false;
-        }
+
         PerryTrace::Constraints perry_cs;
         for (auto &cs : CP.constraints) {
           perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
         }
         PerryCheckPoint neg(CP.ptrace_size, CP.reg_access_size,
+          state.regAccesses.size(),
           state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
           perry_cs);
         state.checkPoints.push_back(neg);
@@ -1223,17 +1214,6 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
       }
       state.constraints.push_back(cs);
     }
-    bool must_be_false;
-    solver->setTimeout(timeout);
-    bool success = solver->mustBeFalse(state.constraints, Expr::createIsZero(condition), must_be_false,
-                                       state.queryMetaData);
-    solver->setTimeout(time::Span());
-    if (success && !must_be_false) {
-      addConstraint(state, Expr::createIsZero(condition));
-    } else {
-      klee_warning_once(B, "cannot fix program state, abort");
-      return false;
-    }
     // now we have two `twin` conditions:
     // a) the preposition condition (i.e., the one within `related_cs`), and
     // b) the postposition condition `condition` (that is assured to be true by `a`)
@@ -1247,6 +1227,7 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
       perry_cs.push_back(state.getPerryExpr(perryExprManager, cs));
     }
     PerryCheckPoint neg(CP.ptrace_size, CP.reg_access_size,
+      state.regAccesses.size(),
       state.getPerryExpr(perryExprManager, Expr::createIsZero(condition)),
       perry_cs);
     state.checkPoints.push_back(neg);
@@ -1377,7 +1358,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
               auto c_it = checkpoints.find(MN);
               if (c_it != checkpoints.end()) {
                 if (canResolveConflict(current, c_it->second)) {
-                  current.reg_constraints[MN] = Expr::createIsZero(condition);
+                  current.reg_constraints.erase(MN);
                   assert(force_branch);
                   *force_branch = true;
                   checkpoints.erase(MN);
@@ -1401,7 +1382,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
               auto c_it = checkpoints.find(MN);
               if (c_it != checkpoints.end()) {
                 if (canResolveConflict(current, c_it->second)) {
-                  current.reg_constraints[MN] = Expr::createIsZero(condition);
+                  current.reg_constraints.erase(MN);
                   assert(force_branch);
                   *force_branch = true;
                   checkpoints.erase(MN);

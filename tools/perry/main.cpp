@@ -1485,7 +1485,8 @@ containsReadTo(const std::string &SymName, const ref<PerryExpr> &PE) {
 }
 
 static void
-collectContainedSym(const ref<PerryExpr> &PE, std::set<SymRead> &S) {
+collectContainedSym(const ref<PerryExpr> &PE, std::set<SymRead> &S,
+                    const std::string &blacklist="") {
   std::deque<ref<PerryExpr>> WL;
   WL.push_back(PE);
   while (!WL.empty()) {
@@ -1493,7 +1494,9 @@ collectContainedSym(const ref<PerryExpr> &PE, std::set<SymRead> &S) {
     WL.pop_front();
     if (auto RE = dyn_cast<PerryReadExpr>(E)) {
       if (auto CE = dyn_cast<PerryConstantExpr>(RE->idx)) {
-        S.insert(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width));
+        if (blacklist.empty() || RE->Name != blacklist) {
+          S.insert(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width));
+        }
       } else {
         klee_warning("Symbolic idx");
       }
@@ -1533,6 +1536,31 @@ static bool containsReadRelated(const std::set<SymRead> &SR,
     }
   }
   return false;
+}
+
+static bool containsReadRelatedStrict(const std::set<SymRead> &SR,
+                                      const ref<PerryExpr> &PE)
+{
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (auto CE = dyn_cast<PerryConstantExpr>(RE->idx)) {
+        if (SR.end() ==
+            SR.find(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width)))
+        {
+          return false;
+        }
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return true;
 }
 
 static bool hasSameConstraints(std::vector<ref<PerryExpr>> &a,
@@ -1891,7 +1919,8 @@ inferWRDependence(const PerryTrace::PerryTraceItem &PTI,
                   const std::vector<ref<RegisterAccess>> &reg_accesses,
                   const std::vector<ref<PerryExpr>> &constraint_to_use,
                   const PerryTrace &trace, int i,
-                  PerryDependentMap &wrDepMap) {
+                  PerryDependentMap &wrDepMap,
+                  const std::string &PeriphSymName) {
   auto &last_access = reg_accesses[last_PTI.reg_access_idx];
   auto &cur_access = reg_accesses[PTI.reg_access_idx];
   unsigned num_cs = PTI.cur_constraints.size();
@@ -1899,13 +1928,25 @@ inferWRDependence(const PerryTrace::PerryTraceItem &PTI,
     = constraint_to_use.size();
   auto this_result = cur_access->ExprInReg;
   std::set<SymRead> after_syms;
+  std::set<SymRead> add_syms;
   collectContainedSym(this_result, after_syms);
+  collectContainedSym(this_result, add_syms, PeriphSymName);
   std::vector<ref<PerryExpr>> after_constraints;
+  std::vector<ref<PerryExpr>> after_constraints_added;
   int this_idx = findLastIn(PTI.cur_constraints,
                             constraint_to_use);
+  assert(this_idx != -1);
+  // collect remaining constraint
   for (unsigned j = this_idx; j < num_constraint_on_read; ++j) {
     if (containsReadRelated(after_syms, "", constraint_to_use[j])) {
       after_constraints.push_back(constraint_to_use[j]);
+      collectContainedSym(constraint_to_use[j], add_syms, PeriphSymName);
+    }
+  }
+  for (unsigned j = 0; j < (unsigned)this_idx; ++j) {
+    if (containsReadRelatedStrict(add_syms, constraint_to_use[j])) {
+      after_constraints.push_back(constraint_to_use[j]);
+      after_constraints_added.push_back(constraint_to_use[j]);
     }
   }
   if (!after_constraints.empty()) {
@@ -1924,6 +1965,7 @@ inferWRDependence(const PerryTrace::PerryTraceItem &PTI,
               cur_access->offset,
               cur_access->width),
       this_result, after_constraints);
+    key.constraints_added = after_constraints_added;
     if (wrDepMap.find(key) == wrDepMap.end()) {
       wrDepMap.insert(
         std::make_pair(key, std::set<DependentItemVal>()));
@@ -2039,7 +2081,8 @@ inferWRDependenceWithCheckPoint(const PerryCheckPoint &cp,
                                 const std::vector<ref<RegisterAccess>> &reg_accesses,
                                 const PerryTrace &trace,
                                 PerryDependentMap &wrDepMap,
-                                LoopRangeTy &LoopRanges) {
+                                LoopRangeTy &LoopRanges,
+                                const std::string &PeriphSymName) {
   unsigned reg_access_size = cp.reg_access_size;
   auto &cur_access = reg_accesses[reg_access_size - 1];
   auto &last_access = reg_accesses[reg_access_size - 2];
@@ -2051,12 +2094,25 @@ inferWRDependenceWithCheckPoint(const PerryCheckPoint &cp,
   auto &last_result = last_access->ExprInReg;
   auto &this_result = cur_access->ExprInReg;
   std::vector<ref<PerryExpr>> after_constraints;
+  std::vector<ref<PerryExpr>> after_constraints_added;
+  auto &cs_to_use = cp.constraints;
+  unsigned num_cs = cs_to_use.size();
+
   after_constraints.push_back(cp.condition);
+  std::set<SymRead> add_syms;
+  collectContainedSym(this_result, add_syms, PeriphSymName);
+  collectContainedSym(cp.condition, add_syms, PeriphSymName);
+  for (unsigned j = 0; j < num_cs; ++j) {
+    if (containsReadRelatedStrict(add_syms, cs_to_use[j])) {
+      after_constraints.push_back(cs_to_use[j]);
+      after_constraints_added.push_back(cs_to_use[j]);
+    }
+  }
+
   std::set<SymRead> before_syms;
   collectContainedSym(last_result, before_syms);
   std::vector<ref<PerryExpr>> before_constraints;
-  auto &cs_to_use = cp.constraints;
-  unsigned num_cs = cs_to_use.size();
+
   for (unsigned j = 0; j < num_cs; ++j) {
     if (containsReadRelated(before_syms, "", cs_to_use[j])) {
       before_constraints.push_back(cs_to_use[j]);
@@ -2067,6 +2123,7 @@ inferWRDependenceWithCheckPoint(const PerryCheckPoint &cp,
             cur_access->offset,
             cur_access->width),
     this_result, after_constraints);
+  key.constraints_added = after_constraints_added;
   if (wrDepMap.find(key) == wrDepMap.end()) {
     wrDepMap.insert(
       std::make_pair(key, std::set<DependentItemVal>()));
@@ -2222,6 +2279,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       auto success_return = rec.success;
       auto &checkpoints = rec.checkpoints;
       std::vector<ref<PerryExpr>> lastWriteConstraint;
+      unsigned last_write_idx = 0;
       bool hasWrite = false;
       bool hasRead = false;
       bool hasNonDataRead = false;
@@ -2257,6 +2315,11 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           hasRead = true;
           // readDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
           readDataRegIdx.insert(cur_access->offset);
+          for (auto &CP : checkpoints) {
+            if (PTI.reg_access_idx >= CP.reg_access_size_post) {
+              RegConstraint.push_back(CP.condition);
+            }
+          }
           if (!isUniqueConstraints(unique_constraints_read, RegConstraint)) {
             continue;
           } else {
@@ -2277,12 +2340,23 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             for (unsigned i = lastSize; i < thisSize; ++i) {
               diffExpr.push_back(RegConstraint[i]);
             }
+            for (auto &CP : checkpoints) {
+              if (last_write_idx < CP.reg_access_size && PTI.reg_access_idx >= CP.reg_access_size_post) {
+                diffExpr.push_back(CP.condition);
+              }
+            }
             if (!diffExpr.empty()) {
               (void)
               isUniqueConstraints(unique_constraints_between_writes, diffExpr);
             }
           }
           lastWriteConstraint = RegConstraint;
+          last_write_idx = PTI.reg_access_idx;
+          for (auto &CP : checkpoints) {
+            if (PTI.reg_access_idx >= CP.reg_access_size_post) {
+              RegConstraint.push_back(CP.condition);
+            }
+          }
           if (!isUniqueConstraints(unique_constraints_write, RegConstraint)) {
             continue;
           } else {
@@ -2309,6 +2383,11 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           std::vector<ref<PerryExpr>> diffFinalCS;
           for (unsigned i = lastWriteConstraint.size(); i < finalSize; ++i) {
             diffFinalCS.push_back(finalCS[i]);
+          }
+          for (auto &CP : checkpoints) {
+            if (last_write_idx < CP.reg_access_size) {
+              diffFinalCS.push_back(CP.condition);
+            }
           }
           unique_constraints_final_per_function.back().push_back(diffFinalCS);
         }
@@ -2369,7 +2448,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                       = (i == trace_size - 1) ? final_constraints
                                               : trace[i + 1].cur_constraints;
                     inferWRDependence(PTI, last_PTI, reg_accesses,
-                                      constraint_to_use, trace, i, wrDepMap);
+                                      constraint_to_use, trace, i, wrDepMap, SymName);
                   }
                 }
               }
@@ -2395,7 +2474,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                               rrDepMap, nm, LoopRanges);
             } else if (last_access->AccessType == RegisterAccess::REG_WRITE){
               inferWRDependenceWithCheckPoint(cp, reg_accesses, trace,
-                                              wrDepMap, LoopRanges);
+                                              wrDepMap, LoopRanges, SymName);
             }
           }
         }
@@ -2458,7 +2537,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   // other constraints must be met on the register to be read
   std::map<unsigned, unsigned> wr_expr_id_to_idx;
   z3::expr_vector wr_conds(z3builder.getContext());
-  z3::expr_vector wr_actions_final(z3builder.getContext());
   std::vector<z3::expr_vector> wr_actions;
   for (auto &key : wrDepMap) {
     // errs() << "wr##############################\n";
@@ -2778,15 +2856,47 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                     action_set.to_string().c_str());
       continue;
     }
-    auto final_action = z3builder.getLogicalBitExprOr(action_set, false, true);
+    z3::expr_vector new_action_set(z3builder.getContext());
+    for (auto action : action_set) {
+      if (z3builder.contains_bv_const(action, "tmp:0:", false)) {
+        // just output this
+        has_cond_action_content = true;
+        std::cerr << "WR Rule: ##################################\n"
+                  << "When:\n"
+                  << wr_conds[i]
+                  << "\nholds, take the following action:\n"
+                  << action
+                  << "\n";
+        OutContent += "\t\t{\n";
+        OutContent += "\t\t\t\"cond\": \"";
+        s.reset();
+        s.add(wr_conds[i]);
+        std::string smt2dump = s.to_smt2();
+        OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+        OutContent += "\",\n";
+        OutContent += "\t\t\t\"action\": \"";
+        s.reset();
+        s.add(action);
+        smt2dump = s.to_smt2();
+        OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+        OutContent += "\"\n";
+        OutContent += "\t\t},\n";
+      } else {
+        new_action_set.push_back(action);
+      }
+    }
+
+    if (new_action_set.empty()) {
+      continue;
+    }
+    auto final_action = z3builder.getLogicalBitExprOr(new_action_set, false, true);
     if (final_action.is_true()) {
       klee_warning("Failed to infer actions for WR condition:\n%s\naction is:\n%s",
                    wr_conds[i].to_string().c_str(),
-                   action_set.to_string().c_str());
+                   new_action_set.to_string().c_str());
       continue;
     }
     has_cond_action_content = true;
-    wr_actions_final.push_back(final_action);
     std::cerr << "WR Rule: ##################################\n"
               << "When:\n"
               << wr_conds[i]

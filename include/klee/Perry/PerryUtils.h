@@ -87,11 +87,14 @@ struct DependentItemKey {
   SymRead sym;
   ref<PerryExpr> expr;
   std::vector<ref<PerryExpr>> constraints;
+  std::vector<ref<PerryExpr>> constraints_added;
 
   DependentItemKey(const SymRead &SR, const ref<PerryExpr> &_expr,
                    const std::vector<ref<PerryExpr>> &_constraints)
     : sym(SR), expr(_expr), constraints(_constraints) {}
 
+  // `constraints_added` should not affect the comparision because
+  // `constraints` has stored all constraints
   bool operator<(const DependentItemKey &DI) const {
     if (sym == DI.sym) {
       int expr_cmp = expr->compare(*DI.expr);

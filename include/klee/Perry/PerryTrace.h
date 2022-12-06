@@ -153,17 +153,21 @@ private:
 struct PerryCheckPoint {
   unsigned ptrace_size;
   unsigned reg_access_size;
+  unsigned reg_access_size_post;
   ref<PerryExpr> condition;
   PerryTrace::Constraints constraints;
 
   PerryCheckPoint(unsigned ptrace_size, unsigned reg_access_size,
+                  unsigned reg_access_size_post,
                   const ref<PerryExpr> &condition,
                   const PerryTrace::Constraints &constraints)
     : ptrace_size(ptrace_size), reg_access_size(reg_access_size),
+      reg_access_size_post(reg_access_size_post),
       condition(condition), constraints(constraints) {}
 
   PerryCheckPoint(const PerryCheckPoint &CP)
     : ptrace_size(CP.ptrace_size), reg_access_size(CP.reg_access_size),
+      reg_access_size_post(CP.reg_access_size_post),
       condition(CP.condition), constraints(CP.constraints) {}
 };
 
