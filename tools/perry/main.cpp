@@ -2516,24 +2516,23 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         // We additionally add constraints on the previously written value and repeat
         // this process. Hopefully this can help.
         z3::expr_vector tmp_vec(z3builder.getContext());
-        if (val.constraints.empty()) {
-          continue;
+        if (!val.constraints.empty()) {
+          std::set<SymRead> tmpSyms;
+          collectContainedSym(val.after, tmpSyms);
+          auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
+                                                    false, tmpSyms, true);
+          tmp_vec.push_back(wis);
+          tmp_vec.push_back(key_cs);
+          z3::expr tmp_key_cs = z3::mk_and(tmp_vec);
+          tmp_key_cs = tmp_key_cs.simplify();
+          z3::expr_vector bit_level_expr_again(bit_level_expr_key);
+          // z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
+          bit_constraints_key
+            = z3builder.inferBitLevelConstraint(tmp_key_cs, key.first.sym,
+                                                bit_level_expr_again);
+          bit_constraints_key = bit_constraints_key.simplify();
+          reset_constraint_key = true;
         }
-        std::set<SymRead> tmpSyms;
-        collectContainedSym(val.after, tmpSyms);
-        auto wis = z3builder.getLogicalBitExprAnd(val.constraints, "",
-                                                  false, tmpSyms, true);
-        tmp_vec.push_back(wis);
-        tmp_vec.push_back(key_cs);
-        z3::expr tmp_key_cs = z3::mk_and(tmp_vec);
-        tmp_key_cs = tmp_key_cs.simplify();
-        z3::expr_vector bit_level_expr_again(bit_level_expr_key);
-        // z3builder.getBitLevelExpr(key.first.expr, bit_level_expr_again);
-        bit_constraints_key
-          = z3builder.inferBitLevelConstraint(tmp_key_cs, key.first.sym,
-                                              bit_level_expr_again);
-        bit_constraints_key = bit_constraints_key.simplify();
-        reset_constraint_key = true;
       }
       if (wr_expr_id_to_idx.find(final_val_constraint.id()) ==
           wr_expr_id_to_idx.end())
