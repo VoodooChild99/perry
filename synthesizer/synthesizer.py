@@ -620,7 +620,7 @@ class Synthesizer:
         else:
           print("should not happen")
           sys.exit(20)
-        assert(is_bv_value(right))
+        assert(is_bv_value(right) or (is_bv(right)))
         reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
         if sym_name not in self.sym_name_to_reg:
           # reg_idx = (reg_idx >> 2)
@@ -678,7 +678,7 @@ class Synthesizer:
         left: ExprRef = cur.arg(0)
         right: ExprRef = cur.arg(1)
         assert(left.decl().kind() == Z3_OP_EXTRACT or is_const(left))
-        assert(is_bv_value(right))
+        assert(is_bv_value(right) or (is_const(right) and is_bv(right)))
         operand_stack.append(cur)
         op_stack.append(StackCell())
       else:
@@ -725,29 +725,52 @@ class Synthesizer:
           # reg_idx = (reg_idx >> 2)
           self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
         target_reg = self.sym_name_to_reg[sym_name]
-        right_val = right.as_long()
-        if len(value) > 0:
-          lhs = value
+        if not is_bv_value(right):
+          sub_expr.append("")
         else:
-          lhs = '{}->{}'.format(self.periph_instance_name, target_reg.name)
-        if is_const(left):
-          tmp = '({} == {})'.format(lhs, hex(right_val))
-        else:
-          extract_high, extract_low = left.params()
-          mask = 0
-          while extract_low <= extract_high:
-            mask |= (1 << extract_low)
-            extract_low += 1
-          if right_val == 1:
-            tmp = '({} & {})'.format(lhs, hex(mask))
+          right_val = right.as_long()
+          if len(value) > 0:
+            lhs = value
           else:
-            assert(right_val == 0)
-            tmp = '(!({} & {}))'.format(lhs, hex(mask))
-        sub_expr.append(tmp)
+            lhs = '{}->{}'.format(self.periph_instance_name, target_reg.name)
+          if is_const(left):
+            tmp = '({} == {})'.format(lhs, hex(right_val))
+          else:
+            extract_high, extract_low = left.params()
+            mask = 0
+            while extract_low <= extract_high:
+              mask |= (1 << extract_low)
+              extract_low += 1
+            if right_val == 1:
+              tmp = '({} & {})'.format(lhs, hex(mask))
+            else:
+              assert(right_val == 0)
+              tmp = '(!({} & {}))'.format(lhs, hex(mask))
+          sub_expr.append(tmp)
     assert(len(sub_expr) == 1)
     return sub_expr.pop()
 
-  def __z3_expr_to_reg(self, expr: ExprRef, is_set: bool) -> List[str]:
+  def __get_linear_formula(self, expr: ExprRef, value:str="value") -> str:
+    if is_bv_value(expr):
+      return str(expr.as_long())
+    elif is_const(expr):
+      assert(expr.decl().name().startswith("tmp"))
+      return value
+    else:
+      expr_kind = expr.decl().kind()
+      if expr_kind == Z3_OP_BADD:
+        return "{} + {}".format(
+          self.__get_linear_formula(expr.arg(0)),
+          self.__get_linear_formula(expr.arg(1)))
+      elif expr_kind == Z3_OP_BMUL:
+        return "{} * {}".format(
+          self.__get_linear_formula(expr.arg(0)),
+          self.__get_linear_formula(expr.arg(1)))
+      else:
+        assert(False and "Should not happen")
+    
+  
+  def __z3_expr_to_reg(self, expr: ExprRef, is_set: bool, value:str="value") -> List[str]:
     # For now, we only support AND, NOT, EQ. 
     # Note that the AND expr must not be a sub-expr of NOT. Otherwise we may
     # have multiple options, and we need to ask the solver to workout a proper
@@ -786,27 +809,38 @@ class Synthesizer:
       assert(eq_expr.decl().kind() == Z3_OP_EQ)
       left: ExprRef = eq_expr.arg(0)
       right: ExprRef = eq_expr.arg(1)
-      assert(left.decl().kind() == Z3_OP_EXTRACT)
-      assert(is_bv_value(right))
-      sym_name = left.arg(0).decl().name()
+      assert(left.decl().kind() == Z3_OP_EXTRACT or (is_const(left) and is_bv(left)))
+      assert(is_bv_value(right) or is_bv(right))
+      if is_const(left):
+        sym_name = left.decl().name()
+      else:
+        sym_name = left.arg(0).decl().name()
       if sym_name not in self.sym_name_to_reg:
         reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
         # reg_idx = (reg_idx >> 2)
         self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
       target_reg = self.sym_name_to_reg[sym_name]
-      right_val = right.as_long()
-      assert(right_val == 1)
-      extract_high, extract_low = left.params()
-      mask = 0
-      while extract_low <= extract_high:
-        mask |= (1 << extract_low)
-        extract_low += 1
-      body = '{}->{}'.format(self.periph_instance_name, target_reg.name)
       real_set = is_set ^ needs_negate
-      if real_set:
-        body += ' |= {};'.format(hex(mask))
+      if is_bv_value(right):
+        right_val = right.as_long()
+        assert(right_val == 1)
+        extract_high, extract_low = left.params()
+        mask = 0
+        while extract_low <= extract_high:
+          mask |= (1 << extract_low)
+          extract_low += 1
+        body = '{}->{}'.format(self.periph_instance_name, target_reg.name)
+        if real_set:
+          body += ' |= {};'.format(hex(mask))
+        else:
+          body += ' &= (~({}));'.format(hex(mask))
       else:
-        body += ' &= (~({}));'.format(hex(mask))
+        # linear formula?
+        assert(real_set)
+        body = '{}->{} = {};'.format(
+          self.periph_instance_name,
+          target_reg.name,
+          self.__get_linear_formula(right, value))
       reg_ops.append(body)
     return reg_ops
 
