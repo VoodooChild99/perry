@@ -63,6 +63,8 @@ peripheral_workload:
   -
     target: PORTA
     kind: PORT
+  -
+    target: LPTMR0
 
 board_config:
   cpu: cortex-m4
@@ -91,7 +93,7 @@ board_config:
 
   peripheral:
     -
-      kind: UART0
+      kind: UART
       instance: [UART0, UART3]
     -
       kind: WDOG
@@ -112,4 +114,6 @@ board_config:
       instance: [GPIOA, GPIOB, GPIOC, GPIOD, GPIOE]
     -
       kind: PORT
-      instance: [PORTA, PORTB, PORTC, PORTE]
+      instance: [PORTA, PORTB, PORTC, PORTD, PORTE]
+    -
+      kind: LPTMR0

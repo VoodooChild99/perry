@@ -40,6 +40,8 @@ peripheral_workload:
   -
     target: GPIOA
   -
+    target: GPIOB
+  -
     target: GPIOD
   -
     target: RNG
@@ -90,7 +92,7 @@ board_config:
       kind: TIM3
     -
       kind: USART
-      instance: [USART1]
+      instance: [USART1, USART2, USART6, USART3]
     -
       kind: PWR
     -
@@ -100,8 +102,10 @@ board_config:
     -
       kind: GPIOA
     -
+      kind: GPIOB
+    -
       kind: GPIOD
-      instance: [GPIOC, GPIOE, GPIOF]
+      instance: [GPIOC, GPIOD, GPIOE, GPIOF, GPIOG]
     -
       kind: RNG
     -

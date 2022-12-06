@@ -85,7 +85,7 @@ board_config:
       instance: [TIM3]
     -
       kind: USART
-      instance: [USART1]
+      instance: [USART1, USART2]
     -
       kind: PWR
     -

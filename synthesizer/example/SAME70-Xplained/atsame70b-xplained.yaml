@@ -1,0 +1,126 @@
+svd: ATSAME70Q21B.svd
+
+prefix: ATSAME70Q21B
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/libhal-SAME70Q21B.flash.a.bca
+
+loop-file: ./loops.yaml
+
+additional-peripheral:
+  -
+    base: 0xe0000000
+    size: 0x1000
+  -
+    base: 0xe0001000
+    size: 0x60
+  -
+    base: 0xe0004000
+    size: 0xfd0
+  -
+    base: 0xe000e000
+    size: 0xc
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000e100
+    size: 0xe04
+  -
+    base: 0xe000ed00
+    size: 0x28
+  -
+    base: 0xe000edf0
+    size: 0x10
+  -
+    base: 0xe000ed90
+    size: 0x30
+  -
+    base: 0xe000ef30
+    size: 0x20
+
+peripheral_workload:
+  -
+    target: UART0
+    kind: UART
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/uart.bc
+    target-struct: Uart
+    constraint_file: perry-atsame70-xplained-uart.json
+  -
+    target: USART0
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/usart.bc
+    target-struct: Usart
+    constraint_file: perry-atsame70-xplained-usart.json
+  -
+    target: PMC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/pmc.bc
+    target-struct: Pmc
+    constraint_file: perry-atsame70-xplained-pmc.json
+  -
+    target: SUPC
+  -
+    target: PIOA
+    kind: PIO
+  -
+    target: EFC
+  -
+    target: WDT
+  -
+    target: SMC
+  -
+    target: CHIPID
+  -
+    target: MATRIX
+
+board_config:
+  cpu: cortex-m7
+  machine_name: atsame70q21b
+  clk_freq: 120000000
+  num_irq: 256
+  init_vtor: 0x00400000
+  bitband: false
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00400000
+      size: 0x00200000
+      type: flash
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00c00000
+      type: ram
+
+  peripheral:
+    -
+      kind: USART
+      instance: [USART0, USART1, USART2]
+    -
+      kind: UART
+      instance: [UART0, UART1, UART2, UART3, UART4]
+    -
+      kind: PIO
+      instance: [PIOA, PIOB, PIOC, PIOD, PIOE]
+    -
+      kind: PMC
+    -
+      kind: SUPC
+    -
+      kind: EFC
+    -
+      kind: WDT
+    -
+      kind: SMC
+    -
+      kind: CHIPID
+    -
+      kind: MATRIX

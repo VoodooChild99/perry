@@ -61,6 +61,14 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f4-spi.json
+  -
+    target: RTC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_rtc.bc
+    target-struct: RTC_TypeDef
+    constraint_file: perry-stm32f4-rtc.json
+  -
+    target: EXTI
 
 board_config:
   cpu: cortex-m4
@@ -101,13 +109,18 @@ board_config:
       base: 0x20000000
       size: 0x200000
       type: ram
+    -
+      name: BKPSRAM
+      base: 0x40024000
+      size: 0x1000
+      type: ram
 
   peripheral:
     -
       kind: TIM3
     -
       kind: USART
-      instance: [USART1]
+      instance: [USART1, USART2, USART3, USART6]
     -
       kind: PWR
     -
@@ -128,3 +141,7 @@ board_config:
       instance: [SPI1]
     -
       kind: SYSCFG
+    -
+      kind: RTC
+    -
+      kind: EXTI

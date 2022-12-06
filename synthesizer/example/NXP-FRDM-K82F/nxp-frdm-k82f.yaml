@@ -1,0 +1,114 @@
+svd: MK82F25615.xml
+
+prefix: FRDMK82F
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+success-ret-file: ./succ-ret.yaml
+
+loop-file: ./loops.yaml
+
+# exclude-function:
+#   - UART_TransferGetSendCount
+#   - UART_SendAddress
+
+bitcode:
+  - ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/libhal-FRDM-K82F.bca
+
+peripheral_workload:
+  -
+    target: LPUART0
+    kind: LPUART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_lpuart.c.obj
+    target-struct: LPUART_Type
+    constraint_file: perry-nxp-frdm-k82f-lpuart.json
+  -
+    target: SPI0
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_dspi.c.obj
+    target-struct: SPI_Type
+    constraint_file: perry-nxp-frdm-k82f-spi.json
+  -
+    target: WDOG
+    kind: WDOG
+  -
+    target: SIM
+    kind: SIM
+  -
+    target: PMC
+    kind: PMC
+  -
+    target: OSC
+    kind: OSC
+  -
+    target: MCG
+    kind: MCG
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_clock.c.obj
+    target-struct: MCG_Type
+    constraint_file: perry-nxp-frdm-k82f-mcg.json
+  -
+    target: RTC
+    kind: RTC
+  -
+    target: GPIOA
+    kind: GPIO
+  -
+    target: PORTA
+    kind: PORT
+  -
+    target: SYSMPU
+
+board_config:
+  cpu: cortex-m4
+  machine_name: nxp_frdm_k82f
+  clk_freq: 120000000
+  num_irq: 256
+  init_vtor: 0x00000000
+  bitband: true
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x08000000
+      type: flash
+    -
+      name: sram_l
+      base: 0x1fff0000
+      size: 0x00010000
+      type: ram
+    -
+      name: sram_u
+      base: 0x20000000
+      size: 0x00030000
+      type: ram
+
+  peripheral:
+    -
+      kind: LPUART
+      instance: [LPUART0, LPUART1, LPUART2, LPUART3, LPUART4]
+    -
+      kind: WDOG
+    -
+      kind: SIM
+    -
+      kind: PMC
+    -
+      kind: OSC
+    -
+      kind: MCG
+    -
+      kind: RTC
+    -
+      kind: GPIO
+      instance: [GPIOA, GPIOB, GPIOC, GPIOD, GPIOE]
+    -
+      kind: PORT
+      instance: [PORTA, PORTB, PORTC, PORTD, PORTE]
+    -
+      kind: SYSMPU

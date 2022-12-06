@@ -1,0 +1,111 @@
+svd: MKL25Z4.xml
+
+prefix: FRDMKL25Z
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+success-ret-file: ./succ-ret.yaml
+
+loop-file: ./loops.yaml
+
+bitcode:
+  - ../../../../HAL-Collection/NXP/FRDM-KL25Z/perry-build/debug/libhal-FRDM-KL25Z.bca
+
+peripheral_workload:
+  -
+    target: RTC
+  -
+    target: SIM
+  -
+    target: GPIOA
+    kind: GPIO
+  -
+    target: PORTA
+    kind: PORT
+  -
+    target: PMC
+  -
+    target: OSC0
+  -
+    target: MCG
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-KL25Z/perry-build/debug/fsl_clock.c.obj
+    target-struct: MCG_Type
+    constraint_file: perry-nxp-frdm-kl25z-mcg.json
+  -
+    target: UART0
+    kind: UART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-KL25Z/perry-build/debug/fsl_lpsci.c.obj
+    target-struct: UART0_Type
+    constraint_file: perry-nxp-frdm-kl25z-uart.json
+  -
+    target: UART1
+    kind: UART1
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-KL25Z/perry-build/debug/fsl_uart.c.obj
+    target-struct: UART_Type
+    constraint_file: perry-nxp-frdm-kl25z-uart1.json
+  -
+    target: SPI0
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-KL25Z/perry-build/debug/fsl_spi.c.obj
+    target-struct: SPI_Type
+    constraint_file: perry-nxp-frdm-kl25z-spi.json
+  
+
+
+board_config:
+  cpu: cortex-m0
+  machine_name: nxp_frdm_kl25z
+  clk_freq: 48000000
+  num_irq: 47
+  init_vtor: 0x00000000
+  bitband: false
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x00020000
+      type: flash
+    -
+      name: sram_l
+      base: 0x1ffff000
+      size: 0x00001000
+      type: ram
+    -
+      name: sram_u
+      base: 0x20000000
+      size: 0x00003000
+      type: ram
+  
+  peripheral:
+    -
+      kind: UART1
+      instance: [UART1, UART2]
+    -
+      kind: UART
+      instance: [UART0]
+    -
+      kind: SPI
+      instance: [SPI0, SPI1]
+    -
+      kind: SIM
+    -
+      kind: RTC
+    -
+      kind: PMC
+    -
+      kind: OSC0
+    -
+      kind: MCG
+    -
+      kind: GPIO
+      instance: [GPIOA, GPIOB, GPIOC, GPIOD, GPIOE]
+    -
+      kind: PORT
+      instance: [PORTA, PORTB, PORTC, PORTD, PORTE]

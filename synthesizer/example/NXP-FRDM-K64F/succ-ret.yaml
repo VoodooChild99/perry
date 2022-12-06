@@ -169,6 +169,34 @@
   succ_val:        0
 - func:            SMC_SetPowerModeWait
   succ_val:        0
+- func:            SerialManager_CloseReadHandle
+  succ_val:        0
+- func:            SerialManager_CloseWriteHandle
+  succ_val:        0
+- func:            SerialManager_Deinit
+  succ_val:        0
+- func:            SerialManager_EnterLowpower
+  succ_val:        0
+- func:            SerialManager_ExitLowpower
+  succ_val:        0
+- func:            SerialManager_Init
+  succ_val:        0
+- func:            SerialManager_OpenReadHandle
+  succ_val:        0
+- func:            SerialManager_OpenWriteHandle
+  succ_val:        0
+- func:            SerialManager_Read
+  succ_val:        0
+- func:            SerialManager_ReadBlocking
+  succ_val:        0
+- func:            SerialManager_StartReading
+  succ_val:        0
+- func:            SerialManager_StartWriting
+  succ_val:        0
+- func:            SerialManager_Write
+  succ_val:        0
+- func:            SerialManager_WriteBlocking
+  succ_val:        0
 - func:            Serial_UartDeinit
   succ_val:        0
 - func:            Serial_UartEnterLowpower
@@ -180,10 +208,6 @@
 - func:            Serial_UartRead
   succ_val:        0
 - func:            Serial_UartWrite
-  succ_val:        0
-- func:            UART_EnableRxFIFO
-  succ_val:        0
-- func:            UART_EnableTxFIFO
   succ_val:        0
 - func:            UART_Init
   succ_val:        0

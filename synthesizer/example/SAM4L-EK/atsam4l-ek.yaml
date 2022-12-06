@@ -1,0 +1,122 @@
+svd: ATSAM4LC4C.svd
+
+prefix: ATSAM4LC4C
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../xdk-asf-3.52.0/build/SAM4L-EK/libhal-SAM4LC4C.flash.a.bca
+
+loop-file: ./loops.yaml
+
+additional-peripheral:
+  -
+    base: 0xe0000000
+    size: 0x1000
+  -
+    base: 0xe0001000
+    size: 0x60
+  -
+    base: 0xe0004000
+    size: 0xfd0
+  -
+    base: 0xe000e000
+    size: 0xc
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000e100
+    size: 0xe04
+  -
+    base: 0xe000ed00
+    size: 0x28
+  -
+    base: 0xe000edf0
+    size: 0x10
+  -
+    base: 0xe000ed90
+    size: 0x30
+  -
+    base: 0xe000ef30
+    size: 0x20
+
+peripheral_workload:
+  -
+    target: USART0
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/usart.bc
+    target-struct: Usart
+    constraint_file: perry-atsam4l-ek-usart.json
+  -
+    target: HCACHE
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/flashcalw.bc
+    target-struct: Hcache
+    constraint_file: perry-atsam4l-ek-hcache.json
+  -
+    target: SCIF
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-struct: Scif
+    constraint_file: perry-atsam4l-ek-scif.json
+  -
+    target: BSCIF
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-struct: Bscif
+    constraint_file: perry-atsam4l-ek-bscif.json
+  -
+    target: PM
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-struct: Pm
+    constraint_file: perry-atsam4l-ek-pm.json
+  -
+    target: HFLASHC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/flashcalw.bc
+    target-struct: Flashcalw
+    constraint_file: perry-atsam4l-ek-hflashc.json
+  -
+    target: GPIO
+
+board_config:
+  cpu: cortex-m4
+  machine_name: atsam4lc4c
+  clk_freq: 120000000
+  num_irq: 256
+  init_vtor: 0x00000000
+  bitband: true
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x00100000
+      type: flash
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00040000
+      type: ram
+
+  peripheral:
+    -
+      kind: USART
+      instance: [USART0, USART1, USART2, USART3]
+    -
+      kind: GPIO
+    -
+      kind: HCACHE
+    -
+      kind: HFLASHC
+    -
+      kind: PM
+    -
+      kind: SCIF
+    -
+      kind: BSCIF
