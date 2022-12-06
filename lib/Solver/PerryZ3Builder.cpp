@@ -2,7 +2,6 @@
 
 #include <stack>
 #include <iostream>
-#include <regex>
 
 using namespace klee;
 
@@ -1026,7 +1025,6 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
                 const std::string &SymName, const std::set<SymRead> &SR,
                 bool simplify_not, bool preserve_all)
 {
-  static const std::regex NameRegex("(.+):(\\d+):(\\d+)");
   z3::expr_vector ret(ctx);
   if (e.is_true() || e.is_false()) {
     ret.push_back(e);

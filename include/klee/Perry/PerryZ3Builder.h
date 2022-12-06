@@ -1,6 +1,8 @@
 #ifndef __PERRY_Z3_BUILDER_H__
 #define __PERRY_Z3_BUILDER_H__
 
+#include <regex>
+
 #include <z3++.h>
 
 #include "klee/Perry/PerryExpr.h"
@@ -10,7 +12,8 @@ namespace klee {
 
 class PerryZ3Builder {
 public:
-  PerryZ3Builder() = default;
+  PerryZ3Builder()
+    : NameRegex("(.+):(\\d+):(\\d+)") {}
 
   z3::expr mk_and(const z3::expr_vector &v);
   z3::expr mk_or(const z3::expr_vector &v);
@@ -131,6 +134,7 @@ private:
 
   bool containsUnsupportedExpr(const z3::expr &e);
   z3::context ctx;
+  const std::regex NameRegex;
 };
 
 }
