@@ -1,0 +1,93 @@
+svd: LPC51U68.xml
+
+prefix: LPC51U68
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+success-ret-file: ./succ-ret.yaml
+
+loop-file: ./loops.yaml
+
+bitcode:
+  - ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/libhal-LPC51U68.bca
+
+exclude-function:
+  - USART_TransferGetSendCount
+  - USART_SendAddress
+  - SPI_WriteData
+
+peripheral_workload:
+  -
+    target: RTC
+  -
+    target: GPIO
+  -
+    target: SPI0
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_spi.c.obj
+    target-struct: SPI_Type
+    constraint_file: perry-nxp-lpc51u68-spi.json
+  -
+    target: SYSCON
+    use-perry: true
+    # target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_clock.c.obj
+    target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_reset.c.obj
+    target-struct: SYSCON_Type
+    constraint_file: perry-nxp-lpc51u68-syscon.json
+  -
+    target: ASYNC_SYSCON
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_reset.c.obj
+    target-struct: ASYNC_SYSCON_Type
+    constraint_file: perry-nxp-lpc51u68-async-syscon.json
+  -
+    target: USART0
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_usart.c.obj
+    target-struct: USART_Type
+    constraint_file: perry-nxp-lpc51u68-usart.json
+
+board_config:
+  cpu: cortex-m0
+  machine_name: nxp_lpc_51u68
+  clk_freq: 150000000
+  num_irq: 47
+  init_vtor: 0x00000000
+  bitband: false
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x00040000
+      type: flash
+    -
+      name: sramx
+      base: 0x04000000
+      size: 0x00008000
+      type: ram
+    -
+      name: sram0
+      base: 0x20000000
+      size: 0x00010000
+      type: ram
+  
+  peripheral:
+    -
+      kind: RTC
+    -
+      kind: GPIO
+    -
+      kind: SYSCON
+    -
+      kind: ASYNC_SYSCON
+    -
+      kind: USART
+      instance: [USART0]
+    -
+      kind: SPI
+      instance: [SPI5]

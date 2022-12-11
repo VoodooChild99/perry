@@ -1,0 +1,104 @@
+svd: ATSAMD20J18.svd
+
+prefix: ATSAMD20J18
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/libhal-SAMD20J18.flash.a.bca
+
+loop-file: ./loops.yaml
+success-ret-file: ./succ-ret.yaml
+
+additional-peripheral:
+  -
+    base: 0xe0000000
+    size: 0x1000
+  -
+    base: 0xe0001000
+    size: 0x60
+  -
+    base: 0xe0004000
+    size: 0xfd0
+  -
+    base: 0xe000e000
+    size: 0xc
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000e100
+    size: 0xe04
+  -
+    base: 0xe000ed00
+    size: 0x28
+  -
+    base: 0xe000edf0
+    size: 0x10
+  -
+    base: 0xe000ed90
+    size: 0x30
+  -
+    base: 0xe000ef30
+    size: 0x20
+
+peripheral_workload:
+  -
+    target: PM
+  -
+    target: PORT
+  -
+    target: SYSCTRL
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/clock.bc
+    target-struct: Sysctrl
+    constraint_file: perry-atsamd20-xplained-pro-sysctrl.json
+  -
+    target: GCLK
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/gclk.bc
+    target-struct: Gclk
+    constraint_file: perry-atsamd20-xplained-pro-gclk.json
+  -
+    target: TC0
+    kind: TC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/tc.bc
+    target-struct: Tc
+    constraint_file: perry-atsamd20-xplained-pro-tc.json
+
+board_config:
+  cpu: cortex-m0
+  machine_name: atsamd20j18
+  clk_freq: 120000000
+  num_irq: 47
+  init_vtor: 0x00000000
+  bitband: false
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x00040000
+      type: flash
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00008000
+      type: ram
+
+  peripheral:
+    -
+      kind: PM
+    -
+      kind: PORT
+      instance: [PORT, PORT_IOBUS]
+    -
+      kind: SYSCTRL
+    -
+      kind: GCLK
+    -
+      kind: TC
+      instance: [TC0, TC1, TC2, TC3, TC4, TC5, TC6. TC7]

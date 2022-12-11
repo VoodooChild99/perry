@@ -204,9 +204,10 @@ class Synthesizer:
     self.perry_common_cmd += [
       "--arm-cpu-version={}".format(self.cpu_type_name),
       "--write-no-tests=true",
-      # "--search=dfs",
+      "--search=dfs",
       "--max-solver-time=10s",
-      "--simplify-sym-indices=true"
+      "--simplify-sym-indices=true",
+      "--disable-verify=true",
     ]
   
   def __parse_yaml(self):
