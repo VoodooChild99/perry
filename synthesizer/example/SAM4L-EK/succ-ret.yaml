@@ -1,0 +1,14 @@
+---
+- func:            ser_fifo_pull_uint16
+  succ_val:        0
+- func:            ser_fifo_pull_uint32
+  succ_val:        0
+- func:            ser_fifo_pull_uint8
+  succ_val:        0
+- func:            ser_fifo_push_uint16
+  succ_val:        0
+- func:            ser_fifo_push_uint32
+  succ_val:        0
+- func:            ser_fifo_push_uint8
+  succ_val:        0
+...
