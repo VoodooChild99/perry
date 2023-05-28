@@ -108,12 +108,84 @@ static void gen_stub_mrs(Module &M) {
   IRB.CreateRet(ret);
 }
 
+static void gen_stub_rbit(Module &M) {
+  // i32 rbit(i32)
+  LLVMContext &MC = M.getContext();
+  IntegerType *i32Ty = Type::getInt32Ty(MC);
+  FunctionCallee stub_callee = M.getOrInsertFunction(INSTR_FN_FREFIX(rbit),
+        i32Ty, i32Ty);
+
+  Function *stub = dyn_cast<Function>(stub_callee.getCallee());
+
+  IRBuilder<> IRB(stub->getContext());
+  IRBuilder<> IRBM(MC);
+  BasicBlock *bb = BasicBlock::Create(IRB.getContext(), "entry", stub);
+  IRB.SetInsertPoint(bb);
+
+  auto var0 = stub->getArg(0);
+  auto One = ConstantInt::get(i32Ty, 1);
+  auto Two = ConstantInt::get(i32Ty, 2);
+  auto Four = ConstantInt::get(i32Ty, 4);
+  auto Eight = ConstantInt::get(i32Ty, 8);
+  auto Sixteen = ConstantInt::get(i32Ty, 16);
+
+  // %2 = lshr i32 %0, 1
+  auto var2 = IRB.CreateLShr(var0, One);
+  // %3 = and i32 %2, 1431655765
+  auto var3 = IRB.CreateAnd({var2, ConstantInt::get(i32Ty, 1431655765)});
+  // %4 = shl i32 %0, 1
+  auto var4 = IRB.CreateShl(var0, One);
+  // %5 = and i32 %4, -1431655766
+  auto var5 = IRB.CreateAnd({var4, ConstantInt::get(i32Ty, -1431655766)});
+  // %6 = or i32 %3, %5
+  auto var6 = IRB.CreateOr({var3, var5});
+  // %7 = lshr i32 %6, 2
+  auto var7 = IRB.CreateLShr(var6, Two);
+  // %8 = and i32 %7, 858993459
+  auto var8 = IRB.CreateAnd({var7, ConstantInt::get(i32Ty, 858993459)});
+  // %9 = shl i32 %6, 2
+  auto var9 = IRB.CreateShl(var6, Two);
+  // %10 = and i32 %9, -858993460
+  auto var10 = IRB.CreateAnd({var9, ConstantInt::get(i32Ty, -858993460)});
+  // %11 = or i32 %8, %10
+  auto var11 = IRB.CreateOr({var8, var10});
+  // %12 = lshr i32 %11, 4
+  auto var12 = IRB.CreateLShr(var11, Four);
+  // %13 = and i32 %12, 252645135
+  auto var13 = IRB.CreateAnd({var12, ConstantInt::get(i32Ty, 252645135)});
+  // %14 = shl i32 %11, 4
+  auto var14 = IRB.CreateShl(var11, Four);
+  // %15 = and i32 %14, -252645136
+  auto var15 = IRB.CreateAnd({var14, ConstantInt::get(i32Ty, -252645136)});
+  // %16 = or i32 %13, %15
+  auto var16 = IRB.CreateOr({var13, var15});
+  // %17 = lshr i32 %16, 8
+  auto var17 = IRB.CreateLShr(var16, Eight);
+  // %18 = and i32 %17, 16711935
+  auto var18 = IRB.CreateAnd({var17, ConstantInt::get(i32Ty, 16711935)});
+  // %19 = shl i32 %16, 8
+  auto var19 = IRB.CreateShl(var16, Eight);
+  // %20 = and i32 %19, -16711936
+  auto var20 = IRB.CreateAnd({var19, ConstantInt::get(i32Ty, -16711936)});
+  // %21 = or i32 %18, %20
+  auto var21 = IRB.CreateOr({var18, var20});
+  // %22 = lshr i32 %21, 16
+  auto var22 = IRB.CreateLShr(var21, Sixteen);
+  // %23 = shl i32 %21, 16
+  auto var23 = IRB.CreateShl(var21, Sixteen);
+  // %24 = or i32 %22, %23
+  auto var24 = IRB.CreateOr({var22, var23});
+  // ret i32 %24
+  IRB.CreateRet(var24);
+}
+
 #define ASM_HANDLE_LIST() \
   { \
     ASM_HANDLE_ENTRY(ldrex),  \
     ASM_HANDLE_ENTRY(strex),  \
     ASM_HANDLE_ENTRY(msr),    \
     ASM_HANDLE_ENTRY(mrs),    \
+    ASM_HANDLE_ENTRY(rbit),   \
   }
 
 RaiseArmAsmPass::HandlerMapTy RaiseArmAsmPass::InitHandlerMap() {
