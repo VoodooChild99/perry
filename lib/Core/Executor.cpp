@@ -1367,11 +1367,11 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
               }
             }
           }
-          std::string MSG;
-          raw_string_ostream OS(MSG);
-          BI->print(OS);
-          OS << ", at ";
-          BI->getDebugLoc().print(OS);
+          // std::string MSG;
+          // raw_string_ostream OS(MSG);
+          // BI->print(OS);
+          // OS << ", at ";
+          // BI->getDebugLoc().print(OS);
           terminateStateEarly(
             current, "visited true state", StateTerminationType::EARLY);
           return StatePair(nullptr, nullptr);
@@ -1408,11 +1408,11 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
       if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
-        std::string MSG;
-        raw_string_ostream OS(MSG);
-        BI->print(OS);
-        OS << ", at ";
-        BI->getDebugLoc().print(OS);
+        // std::string MSG;
+        // raw_string_ostream OS(MSG);
+        // BI->print(OS);
+        // OS << ", at ";
+        // BI->getDebugLoc().print(OS);
         terminateStateEarly(current, "visited false state", StateTerminationType::EARLY);
         return StatePair(nullptr, nullptr);
       }
