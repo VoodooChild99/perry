@@ -12,7 +12,8 @@ from cmsis_svd.parser import (
   SVDPeripheral,
   SVDRegister,
   SVDField,
-  SVDInterrupt
+  SVDInterrupt,
+  SVDRegisterArray
 )
 from typing import List, Mapping, Set, Tuple
 from parse import parse
@@ -94,6 +95,11 @@ class Synthesizer:
     for r in p_p.registers:
       if r.address_offset > last_reg.address_offset:
         last_reg = r
+    if last_reg.derived_from is not None:
+      for rr in p_p._lookup_possibly_derived_attribute("register_arrays"):
+        if rr.name == last_reg.derived_from:
+          last_reg._size = rr._size
+          break
     return p._base_address + last_reg.address_offset + (last_reg._size >> 3)
   
   def __get_peripheral_size(self, p: SVDPeripheral) -> int:
@@ -223,38 +229,9 @@ class Synthesizer:
     self.device: SVDDevice = svd_parser.get_device()
     peripherals: List[SVDPeripheral] = self.device.peripherals
     self.name_to_peripheral: Mapping[str, SVDPeripheral] = {}
-    register_attributes = ["registers", "register_arrays"]
     for p in peripherals:
       self.name_to_peripheral[p.name] = p
-      reg_name_regex = re.compile(r'(.*)\[(\d+)\](.*)$')
-      for attr in register_attributes:
-        regs: List[SVDRegister] = p._lookup_possibly_derived_attribute(attr)
-        for index in range(0, len(regs)):
-          # deal with regex
-          reg_name_matched = reg_name_regex.match(regs[index].name)
-          if reg_name_matched:
-            if len(reg_name_matched.group(3)) > 0:
-              regs[index].name = "{}_{}_{}".format(
-                reg_name_matched.group(1),
-                reg_name_matched.group(2),
-                reg_name_matched.group(3))
-            else:
-              regs[index].name = "{}_{}".format(reg_name_matched.group(1), reg_name_matched.group(2))
           
-          # deal with derivedFrom
-          # TODO: implement this shit
-          if regs[index].derived_from is not None:
-            derived_canonicalized = regs[index].derived_from.replace("%s", "{}")
-            if "%" in derived_canonicalized:
-              print("Failed to canonicalize {}".format(derived_canonicalized))
-            for rr in regs[index].parent.registers:
-              if parse(derived_canonicalized, rr.name) is not None:
-                regs[index]._fields = rr._fields
-                regs[index]._size = rr._size
-                regs[index]._access = rr._access
-                regs[index]._reset_mask = rr._reset_mask
-                regs[index]._reset_value = rr._reset_value
-                break
     # prefix
     if 'prefix' in y:
       self.prefix = y['prefix']
@@ -424,10 +401,17 @@ class Synthesizer:
       sys.exit(11)
     self.offset_to_reg = {}
     if self.target is not None:
-      register_attributes = ["registers", "register_arrays"]
-      regs: List[SVDRegister] = []
-      for attr in register_attributes:
-        regs += self.target._lookup_possibly_derived_attribute(attr)
+      regs: List[SVDRegister] = self.target.registers
+      for r in regs:
+        if r.derived_from is not None:
+          for rr in self.target._lookup_possibly_derived_attribute("register_arrays"):
+            if rr.name == r.derived_from:
+              r._fields = rr._fields
+              r._size = rr._size
+              r._access = rr._access
+              r._reset_mask = r._reset_mask
+              r._reset_value = rr._reset_value
+              r.name = r.name.replace('[', '').replace(']', '')
       # reg_name_regex = re.compile(r'(.*)\[(\d+)\](.*)$')
       # idx = 0
       for r in regs:
