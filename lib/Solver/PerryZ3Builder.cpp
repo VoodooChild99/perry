@@ -589,6 +589,37 @@ ImplVisitLogicOperator(ULT) {
   return;
 }
 
+ImplVisitLogicOperator(SGT) {
+  auto left = e.arg(0);
+  auto right = e.arg(1);
+  // a > b := (msb(a) == 0 && msb(b) == 1) ||
+  //            (msb(a) == msb(b) && a > b)
+  z3::expr_vector left_res(ctx);
+  z3::expr_vector right_res(ctx);
+  visitLogicBitLevel(
+    left, left_res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  visitLogicBitLevel(
+    right, right_res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+  unsigned num_bits = left_res.size();
+  assert(num_bits == right_res.size());
+  assert(num_bits > 0);
+  auto l_msb = left_res.back();
+  auto r_msb = right_res.back();
+  visitLogicBitLevel(
+    ((!l_msb) && r_msb) ||
+    (((l_msb && r_msb) || (((!l_msb) && (!r_msb)))) && z3::ult(right, left)),
+    result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+}
+
+ImplVisitLogicOperator(SLEQ) {
+  auto left = e.arg(0);
+  auto right = e.arg(1);
+  // a <= b := !(a > b)
+  visitLogicBitLevel(
+    !z3::sgt(left, right),
+    result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+}
+
 // bv logical operators
 ImplVisitLogicOperator(BAND) {
   auto num_args = e.num_args();
@@ -1319,6 +1350,16 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
           e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
         break;
       }
+      case Z3_OP_SGT: {
+        visitLogicSGT(
+          e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+        break;
+      }
+      case Z3_OP_SLEQ: {
+        visitLogicSLEQ(
+          e, result, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
+        break;
+      }
       default: {
         klee_error("Unsupported bool operator %s", e.to_string().c_str());
       }
@@ -1782,7 +1823,7 @@ z3::expr PerryZ3Builder::mk_or(const z3::expr_vector &v) {
 bool PerryZ3Builder::containsUnsupportedExpr(const z3::expr &e) {
   static const std::set<Z3_decl_kind> supported_expr_kind {
     Z3_OP_AND, Z3_OP_OR, Z3_OP_XOR, Z3_OP_NOT,
-    Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT,
+    Z3_OP_EQ, Z3_OP_ULEQ, Z3_OP_ULT, Z3_OP_SGT, Z3_OP_SLEQ,
     Z3_OP_BAND, Z3_OP_BOR, Z3_OP_BNOT,
     Z3_OP_CONCAT, Z3_OP_EXTRACT, Z3_OP_ZERO_EXT, Z3_OP_SIGN_EXT,
     Z3_OP_BLSHR, Z3_OP_BASHR, Z3_OP_BSHL,

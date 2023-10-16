@@ -95,6 +95,8 @@ private:
   DefVisitLogicOperator(EQ);
   DefVisitLogicOperator(ULEQ);
   DefVisitLogicOperator(ULT);
+  DefVisitLogicOperator(SGT);
+  DefVisitLogicOperator(SLEQ);
   // bv logical
   DefVisitLogicOperator(BAND);
   DefVisitLogicOperator(BOR);
