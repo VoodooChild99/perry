@@ -1414,14 +1414,50 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
-        // std::string MSG;
-        // raw_string_ostream OS(MSG);
-        // BI->print(OS);
-        // OS << ", at ";
-        // BI->getDebugLoc().print(OS);
-        terminateStateEarly(current, "visited false state", StateTerminationType::EARLY);
-        return StatePair(nullptr, nullptr);
+      if (isLoopHeader(BI)) {
+        auto &checkpoints = current.stack.back().checkpoints;
+        if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
+          if (reg_related) {
+            if (BI->hasMetadata(LLVMContext::MD_dbg)) {
+              MDNode *MN = BI->getMetadata(LLVMContext::MD_dbg);
+              auto c_it = checkpoints.find(MN);
+              if (c_it != checkpoints.end()) {
+                if (canResolveConflict(current, c_it->second)) {
+                  current.reg_constraints.erase(MN);
+                  assert(force_branch);
+                  *force_branch = true;
+                  checkpoints.erase(MN);
+                  return StatePair(nullptr, &current);
+                }
+              }
+            }
+          }
+          // std::string MSG;
+          // raw_string_ostream OS(MSG);
+          // BI->print(OS);
+          // OS << ", at ";
+          // BI->getDebugLoc().print(OS);
+          terminateStateEarly(
+            current, "visited false state", StateTerminationType::EARLY);
+          return StatePair(nullptr, nullptr);
+        } else {
+          if (reg_related) {
+            if (BI->hasMetadata(LLVMContext::MD_dbg)) {
+              MDNode *MN = BI->getMetadata(LLVMContext::MD_dbg);
+              auto c_it = checkpoints.find(MN);
+              if (c_it != checkpoints.end()) {
+                if (canResolveConflict(current, c_it->second)) {
+                  current.reg_constraints.erase(MN);
+                  assert(force_branch);
+                  *force_branch = true;
+                  checkpoints.erase(MN);
+                  return StatePair(nullptr, &current);
+                }
+              }
+              addCheckPoint(current, Expr::createIsZero(condition), MN);
+            }
+          }
+        }
       }
     }
     if (!isInternal) {
@@ -2675,9 +2711,13 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       }
       if (branches.second) {
         BasicBlock *false_target = bi->getSuccessor(1);
+        BasicBlock *cur_block = bi->getParent();
         ExecutionState &cur_state = *branches.second;
-        assert(!force_branch);
-        transferToBasicBlock(false_target, bi->getParent(), cur_state);
+        if (force_branch) {
+          transferToBasicBlock(bi->getSuccessor(0), cur_block, cur_state);
+        } else {
+          transferToBasicBlock(false_target, cur_block, cur_state);
+        }
       }
     }
     break;
