@@ -470,7 +470,8 @@ unsigned dumpStates = 0, dumpPTree = 0;
 
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                    InterpreterHandler *ih, PerryExprManager &_perryExprManager,
-                   const std::set<llvm::BasicBlock*> &loopExitingBlocks)
+                   const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                   LoopRangeTy &loopRanges)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
@@ -478,7 +479,8 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString),
       perryExprManager(_perryExprManager),
-      loopExitingBlocks(loopExitingBlocks) {
+      loopExitingBlocks(loopExitingBlocks),
+      loopRanges(loopRanges) {
 
 
   const time::Span maxTime{MaxTime};
@@ -1120,6 +1122,10 @@ bool Executor::isExitingBlock(BasicBlock *B) {
   return (loopExitingBlocks.find(B) != loopExitingBlocks.end());
 }
 
+int Executor::isLoopHeader(Instruction *inst) {
+  return inLoopCondition(inst, loopRanges);
+}
+
 void Executor::addCheckPoint(ExecutionState &state, const ref<Expr> &condition,
                              MDNode *MN) {
   PerryCheckPointInternal CP(state.pTrace.size(),
@@ -1349,7 +1355,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (res==Solver::True) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (isExitingBlock(BI->getParent())) {
+      if (isLoopHeader(BI)) {
         auto &checkpoints = current.stack.back().checkpoints;
         if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(0))) {
           if (reg_related) {
@@ -5922,6 +5928,7 @@ void Executor::dumpStates() {
 Interpreter *Interpreter::create(LLVMContext &ctx, const InterpreterOptions &opts,
                                  InterpreterHandler *ih,
                                  PerryExprManager &_perryExprManager,
-                        const std::set<llvm::BasicBlock*> &loopExitingBlocks) {
-  return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks);
+                        const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                        LoopRangeTy &loopRange) {
+  return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks, loopRange);
 }

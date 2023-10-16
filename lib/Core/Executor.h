@@ -29,6 +29,7 @@
 #include "klee/Module/KModule.h"
 #include "klee/System/Time.h"
 #include "klee/Taint/Taint.h"
+#include "klee/Perry/PerryLoop.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -218,6 +219,7 @@ private:
   std::vector<PerryRecord> perryRecords;
   PerryExprManager &perryExprManager;
   const std::set<llvm::BasicBlock*> &loopExitingBlocks;
+  LoopRangeTy &loopRanges;
   // std::vector<PerryTrace> RegAccessTrace;
   // std::vector<std::pair<bool, PerryTrace::Constraints>> finalConditions;
   // std::vector<uint64_t> returnValues;
@@ -504,7 +506,8 @@ private:
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
       InterpreterHandler *ie, PerryExprManager &_perryExprManager,
-      const std::set<llvm::BasicBlock*> &loopExitingBlocks);
+      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+      LoopRangeTy &loopRange);
   virtual ~Executor();
 
   const InterpreterHandler& getHandler() {
@@ -587,6 +590,7 @@ public:
   bool shouldTerminatePath(ExecutionState &state,
                            llvm::BasicBlock *src, llvm::BasicBlock *dst);
   bool isExitingBlock(llvm::BasicBlock *B);
+  int isLoopHeader(llvm::Instruction *inst);
   void addCheckPoint(ExecutionState &state, const ref<Expr> &condition, llvm::MDNode *BI);
   static const int PERRY_PATH_TERMINATE_THRESHOLD = 2;
   static const std::set<std::string> whitelist;

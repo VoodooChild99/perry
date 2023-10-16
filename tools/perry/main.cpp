@@ -29,6 +29,7 @@
 #include "klee/Module/KModule.h"
 #include "klee/Perry/PerryZ3Builder.h"
 #include "klee/Perry/PerryUtils.h"
+#include "klee/Perry/PerryLoop.h"
 
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -1314,91 +1315,7 @@ collectTopLevelFunctions(llvm::Module& MainModule,
   pm.run(MainModule);
 }
 
-struct PerryLoopItem {
-  std::string FilePath;
-  unsigned beginLine = 0;
-  unsigned beginColumn = 0;
-  unsigned endLine = 0;
-  unsigned endColumn = 0;
-
-  PerryLoopItem(const std::string &FilePath, unsigned beginLine,
-                unsigned beginColumn, unsigned endLine, unsigned endColumn)
-    : FilePath(FilePath), beginLine(beginLine), beginColumn(beginColumn),
-      endLine(endLine), endColumn(endColumn) {}
-  PerryLoopItem() = default;
-  PerryLoopItem(const PerryLoopItem &PI)
-    : FilePath(PI.FilePath),
-      beginLine(PI.beginLine), beginColumn(PI.beginColumn),
-      endLine(PI.endLine), endColumn(PI.endColumn) {}
-};
-
-template<>
-struct llvm::yaml::MappingTraits<PerryLoopItem> {
-  static void mapping(IO &io, PerryLoopItem &item) {
-    io.mapRequired("file", item.FilePath);
-    io.mapRequired("begin_line", item.beginLine);
-    io.mapRequired("begin_column", item.beginColumn);
-    io.mapRequired("end_line", item.endLine);
-    io.mapRequired("end_column", item.endColumn);
-  }
-};
-
-template<>
-struct llvm::yaml::SequenceTraits<std::vector<PerryLoopItem>> {
-  static size_t size(IO &io, std::vector<PerryLoopItem> &vec) {
-    return vec.size();
-  }
-
-  static PerryLoopItem &element(IO &io, std::vector<PerryLoopItem> &vec,
-                               size_t index) {
-    if (index >= vec.size()) {
-      vec.resize(index + 1);
-    }
-    return vec[index];
-  }
-};
-
-struct PerryLoopItemLoc {
-  unsigned beginLine = 0;
-  unsigned beginColumn = 0;
-  unsigned endLine = 0;
-  unsigned endColumn = 0;
-
-  PerryLoopItemLoc(unsigned beginLine, unsigned beginColumn,
-                   unsigned endLine, unsigned endColumn)
-    : beginLine(beginLine), beginColumn(beginColumn),
-      endLine(endLine), endColumn(endColumn) {}
-  
-  PerryLoopItemLoc(const PerryLoopItemLoc &IL)
-    : beginLine(IL.beginLine), beginColumn(IL.beginColumn),
-      endLine(IL.endLine), endColumn(IL.endColumn) {}
-  
-  PerryLoopItemLoc(const PerryLoopItem &PI)
-    : beginLine(PI.beginLine), beginColumn(PI.beginColumn),
-      endLine(PI.endLine), endColumn(PI.endColumn) {}
-  
-  // returns true if `this` contains `IL`
-  bool contains(unsigned line, unsigned col) const {
-    if (line >= beginLine && line <= endLine) {
-      if (beginLine == endLine) {
-        return (col >= beginColumn && col <= endColumn);
-      } else {
-        if (line == beginLine) {
-          return col >= beginColumn;
-        } else if (line == endLine) {
-          return col <= endColumn;
-        }
-        return true;
-      }
-    } else {
-      return false;
-    }
-  }
-};
-
-using LoopRangeTy = std::map<std::string, std::vector<PerryLoopItemLoc>>;
-
-static void loadLoopInfo(LoopRangeTy &info) {
+void loadLoopInfo(LoopRangeTy &info) {
   if (LoopFile.empty()) {
     klee_warning(
       "Loop file is not given - fallback to built-in analysis");
@@ -1456,6 +1373,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
                       const std::set<llvm::BasicBlock *> &loopExitingBlocks,
+                      LoopRangeTy &loopRange,
                       bool do_bind);
 
 static int workerPID;
@@ -1690,7 +1608,7 @@ static int inNestedScope(Instruction *a, Instruction *b) {
 // -1: dont know
 //  0: not in loop condition
 //  1: yes
-static int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
+int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
   // static LoopRangeTy _LookUpMap;
   using LoopUpCacheTy
     = std::map<std::string, std::map<std::pair<unsigned, unsigned>, bool>>;
@@ -3102,7 +3020,7 @@ int main(int argc, char **argv) {
   for (auto TopFunc : TopLevelFunctions) {
     records.clear();
     singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
-              liveTaint, records, PEM, loopExitingBlocks, do_bind);
+              liveTaint, records, PEM, loopExitingBlocks, LoopRanges, do_bind);
     all_records[TopFunc] = std::move(records);
     do_bind = false;
   }
@@ -3197,12 +3115,13 @@ static void runKlee(std::vector<bool> &replayPath,
                     std::vector<PerryRecord> &records,
                     PerryExprManager &PEM,
                     const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                    LoopRangeTy &loopRange,
                     bool do_bind)
 {
   KleeHandler *handler = new KleeHandler(0, nullptr);
   Interpreter *interpreter =
     theInterpreter
-      = Interpreter::create(ctx, IOpts, handler, PEM, loopExitingBlocks);
+      = Interpreter::create(ctx, IOpts, handler, PEM, loopExitingBlocks, loopRange);
   assert(interpreter);
   handler->setInterpreter(interpreter);
 
@@ -3355,6 +3274,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
                       const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                      LoopRangeTy &loopRange,
                       bool do_bind)
 {
 
@@ -3394,12 +3314,12 @@ static void singlerun(std::vector<bool> &replayPath,
       }
       close(crpwfd[0]);
       runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts,
-              cwprfd[1], records, PEM, loopExitingBlocks, do_bind);
+              cwprfd[1], records, PEM, loopExitingBlocks, loopRange, do_bind);
       exit(0);
     }
   } else {
     // no need to fork
     runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts, 0,
-            records, PEM, loopExitingBlocks, do_bind);
+            records, PEM, loopExitingBlocks, loopRange, do_bind);
   }
 }

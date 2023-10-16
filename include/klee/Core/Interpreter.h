@@ -19,6 +19,7 @@
 #include "klee/Perry/PerryTrace.h"
 #include "klee/Perry/Passes.h"
 #include "klee/Perry/PerryExprManager.h"
+#include "klee/Perry/PerryLoop.h"
 
 struct KTest;
 
@@ -130,7 +131,8 @@ public:
                              const InterpreterOptions &_interpreterOpts,
                              InterpreterHandler *ih,
                              PerryExprManager &_perryExprManager,
-      const std::set<llvm::BasicBlock*> &loopExitingBlocks);
+      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+      LoopRangeTy &loopRange);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final
