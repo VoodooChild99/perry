@@ -755,7 +755,7 @@ class Synthesizer:
         assert(False and "Should not happen")
     
   
-  def __z3_expr_to_reg(self, expr: ExprRef, is_set: bool, value:str="value") -> List[str]:
+  def __z3_expr_to_reg(self, expr: ExprRef, is_set: bool, value:str="value") -> Set[str]:
     # For now, we only support AND, NOT, EQ. 
     # Note that the AND expr must not be a sub-expr of NOT. Otherwise we may
     # have multiple options, and we need to ask the solver to workout a proper
@@ -763,7 +763,7 @@ class Synthesizer:
     WL: List[ExprRef] = []
     WL.append(expr)
     set_expr: List[ExprRef] = []
-    reg_ops: List[str] = []
+    reg_ops: Set[str] = set()
     while len(WL) > 0:
       cur = WL.pop()
       assert(is_app(cur))
@@ -826,7 +826,7 @@ class Synthesizer:
           self.periph_instance_name,
           target_reg.name,
           self.__get_linear_formula(right, value))
-      reg_ops.append(body)
+      reg_ops.add(body)
     return reg_ops
 
   def _gen_header_include(self) -> str:
@@ -931,15 +931,15 @@ static void {0}({1} *{2}) {{
           self.periph_instance_name, r.name, hex(r._reset_value)
         )
     # reset write conditions
+    wc_reset_exprs = set()
     if self.write_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.write_constraint, True):
-        content += '\t{}\n'.format(s)
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.write_constraint, True))
     if self.between_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.between_writes_constraint, True):
-        content += '\t{}\n'.format(s)
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.between_writes_constraint, True))
     if self.post_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.post_writes_constraint, True):
-        content += '\t{}\n'.format(s)
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.post_writes_constraint, True))
+    for s in wc_reset_exprs:
+      content += '\t{}\n'.format(s)
     body = body.format(
       self.register_reset_func_name,
       self.struct_name,
@@ -1022,25 +1022,26 @@ buffer_drained:
 }}
 """
     content_before_write = ''
+    expr_set = set()
+    
     if self.write_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.write_constraint, False):
-        content_before_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, False))
     if self.between_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.between_writes_constraint, False):
-        content_before_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, False))
     if self.post_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.post_writes_constraint, False):
-        content_before_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, False))
+    for s in expr_set:
+      content_before_write += '\t{}\n'.format(s)
+    expr_set.clear()
     content_after_write = ''
     if self.write_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.write_constraint, True):
-        content_after_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, True))
     if self.between_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.between_writes_constraint, True):
-        content_after_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, True))
     if self.post_writes_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.post_writes_constraint, True):
-        content_after_write += '\t{}\n'.format(s)
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, True))
+    for s in expr_set:
+      content_after_write += '\t{}\n'.format(s)
     assert(len(self.write_datareg_offset) == 1)
     body = body.format(
       self.transmit_func_name,
