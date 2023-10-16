@@ -1191,14 +1191,15 @@ canResolveConflict(ExecutionState &state, PerryCheckPointInternal &CP) {
     ConstraintSet c_set;
     c_set.push_back(cs);
     solver->setTimeout(timeout);
-    bool success = solver->evaluate(c_set, condition, res,
+    bool tmp_res;
+    bool success = solver->mustBeTrue(c_set, condition, tmp_res,
                                     state.queryMetaData);
     solver->setTimeout(time::Span());
     if (!success) {
       klee_warning("Query time out when resolving conflicts");
       continue;
     }
-    if (res != Solver::True) {
+    if (!tmp_res) {
       continue;
     }
     related_cs.insert(cs);
