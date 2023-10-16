@@ -1075,7 +1075,11 @@ struct {0} {{
       content += '\tqemu_irq irq[{}];\n\n'.format(num_irq)
     # registers
     content += '\t/*registers*/\n'
+    gened = set()
     for r in self.regs:
+      if r.name in gened:
+        continue
+      gened.add(r.name)
       reg_type = self.__register_size_to_type(r._size)
       if reg_type is None:
         print(
@@ -1114,17 +1118,27 @@ struct {0} {{
     body += '#define {}\t\t\t\t{}\n\n'.format(
       self.periph_size_def, hex(self.__get_peripheral_size_lst(self.target))
     )
+    gened = {}
     for r in self.regs:
       if not self.all_in_one:
         name_to_use = r.name
       else:
         name_to_use = '{}_{}'.format(self.name_upper, r.name)
-      body += 'REG{}({}, {})\n'.format(r._size, name_to_use, hex(r.address_offset))
       fields: List[SVDField] = r._fields
-      for f in fields:
-        body += '\tFIELD({}, {}, {}, {})\n'.format(
-          name_to_use, f.name, f.bit_offset, f.bit_width
-        )
+      if name_to_use in gened:
+        for f in fields:
+          if f.name not in gened[name_to_use]:
+            gened[name_to_use].append(f.name)
+            body += '\tFIELD({}, {}, {}, {})\n'.format(
+              name_to_use, f.name, f.bit_offset, f.bit_width
+            )
+      else:
+        gened[name_to_use] = [f.name for f in fields]
+        body += 'REG{}({}, {})\n'.format(r._size, name_to_use, hex(r.address_offset))
+        for f in fields:
+          body += '\tFIELD({}, {}, {}, {})\n'.format(
+            name_to_use, f.name, f.bit_offset, f.bit_width
+          )
     body += '\n'
     return body
   
