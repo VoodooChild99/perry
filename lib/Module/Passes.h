@@ -244,6 +244,26 @@ public:
     OkValuesMap(_OkValuesMap) {}
   ~FuncSymbolizePass();
   bool runOnModule(llvm::Module &M) override;
+  struct Field {
+    int offset;
+    int num_bits;
+    int start_bit;
+
+    bool operator==(const Field &rhs) {
+      return this->offset     == rhs.offset &&
+             this->num_bits   == rhs.num_bits &&
+             this->start_bit  == rhs.start_bit;
+    }
+
+    friend llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                         const Field &F) {
+      os << "offset=" << F.offset
+         << ", num_bits=" << F.num_bits
+         << ", start_bit=" << F.start_bit << "\n";
+      return os;
+    }
+  };
+
 private:
   // A tree-like data structure to hold the real value of each formal param
   struct ParamCell {
@@ -272,6 +292,21 @@ private:
   std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;
   std::pair<llvm::Value*, int> fRetVal;
   llvm::CallGraph *CG = nullptr;
+  bool TargetIsETH = false;
+  Field TxBufLen;
+  Field RxFrameLen;
+  Field RxBufLen;
+  Field DescBuf;
+  llvm::BasicBlock *rx_set_length_block = nullptr;
+
+  bool isEthernetPeriph(llvm::StringRef name);
+  void analyzeDescRegs(llvm::Module &M);
+  void analyzeDescTxBufferLen(llvm::Module &M);
+  void analyzeDescRxBufferLen(llvm::Module &M);
+  void analyzeDescRxFrameLen(llvm::Module &M);
+  void analyzeDescBuffer(llvm::Module &M);
+  void analyzeDescMemLayout(llvm::Module &M);
+  void analyzeDescConstraints(llvm::Module &M);
   void symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
@@ -283,8 +318,8 @@ private:
   void callTarget(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
                   std::vector<ParamCell*> &results);
   void fillParamas(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
-  void collectTaint(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results,
-                    const std::string &FName);
+  void collectTaint(llvm::IRBuilder<> &IRB);
+  void collectRetVal(llvm::IRBuilder<> &IRB, const std::string &FName);
   void symbolizeValue(llvm::IRBuilder<> &IRB, llvm::Value *Var,
                       const std::string &Name, uint32_t Size);
   bool createCellsFrom(llvm::IRBuilder<> &IRB, ParamCell *root);

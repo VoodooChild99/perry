@@ -30,6 +30,7 @@
 #include "klee/Perry/PerryZ3Builder.h"
 #include "klee/Perry/PerryUtils.h"
 #include "klee/Perry/PerryLoop.h"
+#include "klee/Perry/PerryEthInfo.h"
 
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -337,6 +338,7 @@ namespace {
 namespace klee {
 extern cl::opt<std::string> MaxTime;
 class ExecutionState;
+PerryEthInfo *perry_eth_info = nullptr;
 }
 
 /***/
@@ -2853,9 +2855,171 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     OutContent = OutContent.substr(0, OutContent.length() - 2);
     OutContent += "\n";
   }
-  OutContent += "\t]\n";
+  OutContent += "\t]";
 
-  OutContent += "}";
+  // write ETH constraints, if any
+  if (perry_eth_info->rx_desc_reg_offset != -1) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"eth_desc_size\": ";
+    OutContent += std::to_string(perry_eth_info->desc_struct_size);
+    OutContent += ",\n";
+
+    OutContent += "\t\"eth_rx_desc_reg_offset\": ";
+    OutContent += std::to_string(perry_eth_info->rx_desc_reg_offset);
+    OutContent += ",\n";
+
+    OutContent += "\t\"eth_tx_desc_reg_offset\": ";
+    OutContent += std::to_string(perry_eth_info->tx_desc_reg_offset);
+    OutContent += ",\n";
+
+    OutContent += "\t\"eth_desc_tx_buf_len\": [";
+    OutContent += std::to_string(perry_eth_info->desc_tx_buf_len.offset);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_tx_buf_len.start_bit);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_tx_buf_len.num_bits);
+    OutContent += "],\n";
+
+    OutContent += "\t\"eth_desc_rx_frame_len\": [";
+    OutContent += std::to_string(perry_eth_info->desc_rx_frame_len.offset);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_rx_frame_len.start_bit);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_rx_frame_len.num_bits);
+    OutContent += "],\n";
+
+    OutContent += "\t\"eth_desc_buf\": [";
+    OutContent += std::to_string(perry_eth_info->desc_buf.offset);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_buf.start_bit);
+    OutContent += ", ";
+    OutContent += std::to_string(perry_eth_info->desc_buf.num_bits);
+    OutContent += "],\n";
+
+    OutContent += "\t\"eth_desc_rx_buf_len\": ";
+    if (perry_eth_info->desc_rx_buf_len_stored_in_reg) {
+      OutContent += std::to_string(perry_eth_info->desc_rx_buf_len.reg_offset);
+      OutContent += ",\n";
+    } else {
+      OutContent += "[";
+      OutContent += std::to_string(perry_eth_info->desc_rx_buf_len.f.offset);
+      OutContent += ", ";
+      OutContent += std::to_string(perry_eth_info->desc_rx_buf_len.f.start_bit);
+      OutContent += ", ";
+      OutContent += std::to_string(perry_eth_info->desc_rx_buf_len.f.num_bits);
+      OutContent += "],\n";
+    }
+
+    OutContent += "\t\"eth_desc_mem_layout\": \"";
+    switch (perry_eth_info->mem_layout) {
+      case PerryEthInfo::UNKNOWN: {
+        OutContent += "UNKOWN";
+        break;
+      }
+      case PerryEthInfo::RINGBUF: {
+        OutContent += "RINGBUF";
+        break;
+      }
+      case PerryEthInfo::ARRAY: {
+        OutContent += "ARRAY";
+        break;
+      }
+    }
+    OutContent += "\",\n";
+
+    if (perry_eth_info->mem_layout == PerryEthInfo::RINGBUF) {
+      OutContent += "\t\"eth_desc_next_desc\": [";
+      OutContent += std::to_string(perry_eth_info->desc_next_desc.offset);
+      OutContent += ", ";
+      OutContent += std::to_string(perry_eth_info->desc_next_desc.start_bit);
+      OutContent += ", ";
+      OutContent += std::to_string(perry_eth_info->desc_next_desc.num_bits);
+      OutContent += "],\n";
+    } else if (perry_eth_info->mem_layout == PerryEthInfo::ARRAY) {
+      std::vector<std::vector<ref<PerryExpr>>> eth_last_desc_cs {
+      std::vector<ref<PerryExpr>>(
+          perry_eth_info->last_desc_cs.begin(),
+          perry_eth_info->last_desc_cs.end()
+        )
+      };
+      OutContent += "\t\"eth_last_desc_constraints\": \"";
+      if (perry_eth_info->last_desc_cs.size() > 0) {
+        std::cerr << "ETH last descriptor constraints: \n";
+        auto rc = z3builder.getLogicalBitExprBatchOr(eth_last_desc_cs, "d");
+        std::cerr << rc << "\n";
+        s.reset();
+        s.add(rc);
+        std::cerr << s.check() << "\n";
+        std::cerr << s.get_model() << "\n";
+        std::string smt2dump = s.to_smt2();
+        OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      }
+      OutContent += "\",\n";
+    }
+
+    std::vector<std::vector<ref<PerryExpr>>> eth_last_seg_cs {
+      std::vector<ref<PerryExpr>>(
+        perry_eth_info->last_seg_cs.begin(),
+        perry_eth_info->last_seg_cs.end()
+      )
+    };
+    OutContent += "\t\"eth_last_seg_constraints\": \"";
+    if (perry_eth_info->last_seg_cs.size() > 0) {
+      std::cerr << "ETH last seg constraints: \n";
+      auto rc = z3builder.getLogicalBitExprBatchOr(eth_last_seg_cs, "d");
+      std::cerr << rc << "\n";
+      s.reset();
+      s.add(rc);
+      std::cerr << s.check() << "\n";
+      std::cerr << s.get_model() << "\n";
+      std::string smt2dump = s.to_smt2();
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    }
+    OutContent += "\",\n";
+
+    std::vector<std::vector<ref<PerryExpr>>> eth_avail_seg_cs {
+      std::vector<ref<PerryExpr>>(
+        perry_eth_info->avail_cs.begin(),
+        perry_eth_info->avail_cs.end()
+      )
+    };
+    OutContent += "\t\"eth_avail_seg_constraints\": \"";
+    if (perry_eth_info->avail_cs.size() > 0) {
+      std::cerr << "ETH available seg constraints: \n";
+      auto rc = z3builder.getLogicalBitExprBatchOr(eth_avail_seg_cs, "d");
+      std::cerr << rc << "\n";
+      s.reset();
+      s.add(rc);
+      std::cerr << s.check() << "\n";
+      std::cerr << s.get_model() << "\n";
+      std::string smt2dump = s.to_smt2();
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    }
+    OutContent += "\",\n";
+
+    std::vector<std::vector<ref<PerryExpr>>> eth_first_seg_cs {
+      std::vector<ref<PerryExpr>>(
+        perry_eth_info->first_seg_cs.begin(),
+        perry_eth_info->first_seg_cs.end()
+      )
+    };
+    OutContent += "\t\"eth_first_seg_constraints\": \"";
+    if (perry_eth_info->first_seg_cs.size() > 0) {
+      std::cerr << "ETH first seg constraints: \n";
+      auto rc = z3builder.getLogicalBitExprBatchOr(eth_first_seg_cs, "d");
+      std::cerr << rc << "\n";
+      s.reset();
+      s.add(rc);
+      std::cerr << s.check() << "\n";
+      std::cerr << s.get_model() << "\n";
+      std::string smt2dump = s.to_smt2();
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    }
+    OutContent += "\"";
+  }
+
+  OutContent += "\n}";
   fwrite(OutContent.c_str(), 1, OutContent.size(), OF);
   fclose(OF);
 }
@@ -2900,6 +3064,7 @@ int main(int argc, char **argv) {
   std::map<StructOffset, std::set<std::string>> PtrFunction;
   std::map<std::string, std::set<uint64_t>> OkValuesMap;
   LoopRangeTy LoopRanges;
+  perry_eth_info = new PerryEthInfo();
   loadLoopInfo(LoopRanges);
   collectTopLevelFunctions(*mainModule, TopLevelFunctions, PtrFunction,
                            OkValuesMap);
@@ -3046,6 +3211,8 @@ int main(int argc, char **argv) {
   for (auto node : ns) {
     delete node;
   }
+  delete perry_eth_info;
+  perry_eth_info = nullptr;
 
   return 0;
 }

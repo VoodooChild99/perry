@@ -3,6 +3,7 @@ import sys
 import re
 import yaml
 import subprocess
+import fnmatch
 
 from pathlib import Path
 from z3 import *
@@ -30,6 +31,11 @@ class Synthesizer:
     ]
     self.chardev_include = [
       'chardev/char-fe.h'
+    ]
+    self.eth_include = [
+      'net/net.h',
+      'net/eth.h',
+      'sysemu/dma.h'
     ]
     self.src_include = [
       'qemu/osdep.h',
@@ -61,7 +67,7 @@ class Synthesizer:
       'sysemu/sysemu.h'
     ]
     if self.all_in_one:
-      all_in_one_include = self.src_include + self.header_include + self.board_include + self.chardev_include
+      all_in_one_include = self.src_include + self.header_include + self.board_include + self.chardev_include + self.eth_include
       self.all_in_one_include = []
       for x in all_in_one_include:
         if x not in self.all_in_one_include:
@@ -104,6 +110,12 @@ class Synthesizer:
   
   def __get_peripheral_size(self, p: SVDPeripheral) -> int:
     return self.__get_peripheral_end(p) - self.__get_peripheral_base(p)
+
+  def __get_peripheral_size_lst(self, p: List[SVDPeripheral]) -> int:
+    reg_ends = [self.__get_peripheral_end(pp) for pp in p]
+    reg_ends = sorted(reg_ends, reverse=True)
+    periph_base = self.__get_peripheral_base(p[0])
+    return reg_ends[0] - periph_base
   
   def __parse_ar_archive(self, path: str) -> List[str]:
     contained_files = subprocess.check_output(['ar', '-t', path]).decode().strip()
@@ -148,12 +160,37 @@ class Synthesizer:
 
     peripherals: List[SVDPeripheral] = self.device.peripherals
 
+    periph_groups = []
+    if self.peripheral_workload is not None:
+      for pw in self.peripheral_workload:
+        if '*' in pw['target'] or '?' in pw['target'] or '[' in pw['target']:
+          periph_groups.append(pw['target'])
+
     # try resolve conflict
     all_ranges = []
-    for p in peripherals:
-      _p_base = self.__get_peripheral_base(p)
-      _p_size = self.__get_peripheral_size(p)
-      all_ranges.append((_p_base, _p_base + _p_size - 1))
+    if len(periph_groups) > 0:
+      periph_to_exclude = set()
+      for pg in periph_groups:
+        gps = []
+        for p in peripherals:
+          if fnmatch.fnmatch(p.name, pg):
+            gps.append(p)
+            periph_to_exclude.add(p.name)
+        gps = sorted(gps, key=lambda x:x._base_address)
+        _p_base = self.__get_peripheral_base(gps[0])
+        _p_size = self.__get_peripheral_size_lst(gps)
+        all_ranges.append((_p_base, _p_base + _p_size - 1))
+      for p in peripherals:
+        if p.name in periph_to_exclude:
+          continue
+        _p_base = self.__get_peripheral_base(p)
+        _p_size = self.__get_peripheral_size(p)
+        all_ranges.append((_p_base, _p_base + _p_size - 1))
+    else:
+      for p in peripherals:
+        _p_base = self.__get_peripheral_base(p)
+        _p_size = self.__get_peripheral_size(p)
+        all_ranges.append((_p_base, _p_base + _p_size - 1))
     for p in self.additional_peripheral:
       all_ranges.append((p['base'], p['base'] + p['size'] - 1))
     
@@ -314,6 +351,19 @@ class Synthesizer:
     ### parse constraints ###
     ###############################
     # data regs
+    self.eth_desc_size = None
+    self.eth_rx_desc_reg_offset = None
+    self.eth_tx_desc_reg_offset = None
+    self.eth_desc_tx_buf_len = None
+    self.eth_desc_rx_frame_len = None
+    self.eth_desc_buf = None
+    self.eth_desc_rx_buf_len = None
+    self.eth_desc_mem_layout = None
+    self.eth_desc_next_desc = None
+    self.eth_last_seg_constraints = None
+    self.eth_avail_seg_constraints = None
+    self.eth_first_seg_constraints = None
+    self.eth_last_desc_constraints = None
     if constraint_file is None:
       self.read_datareg_offset = []
       self.write_datareg_offset = []
@@ -386,6 +436,61 @@ class Synthesizer:
         s1.from_string(pairs['action'])
         action = s1.assertions()[0]
         self.cond_actions.append((cond, action))
+      # ETH
+      if 'eth_desc_size' in loaded_json:
+        self.eth_desc_size = loaded_json['eth_desc_size']
+      if 'eth_rx_desc_reg_offset' in loaded_json:
+        self.eth_rx_desc_reg_offset = loaded_json['eth_rx_desc_reg_offset']
+      if 'eth_tx_desc_reg_offset' in loaded_json:
+        self.eth_tx_desc_reg_offset = loaded_json['eth_tx_desc_reg_offset']
+      if 'eth_desc_tx_buf_len' in loaded_json:
+        self.eth_desc_tx_buf_len = loaded_json['eth_desc_tx_buf_len']
+      if 'eth_desc_rx_frame_len' in loaded_json:
+        self.eth_desc_rx_frame_len = loaded_json['eth_desc_rx_frame_len']
+      if 'eth_desc_buf' in loaded_json:
+        self.eth_desc_buf = loaded_json['eth_desc_buf']
+      if 'eth_desc_rx_buf_len' in loaded_json:
+        self.eth_desc_rx_buf_len = loaded_json['eth_desc_rx_buf_len']
+      if 'eth_desc_mem_layout' in loaded_json:
+        self.eth_desc_mem_layout = loaded_json['eth_desc_mem_layout']
+      if 'eth_desc_next_desc' in loaded_json:
+        self.eth_desc_next_desc = loaded_json['eth_desc_next_desc']
+      if 'eth_last_seg_constraints' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['eth_last_seg_constraints'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.eth_last_seg_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.eth_last_seg_constraints: ExprRef = exprs[0]
+      if 'eth_avail_seg_constraints' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['eth_avail_seg_constraints'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.eth_avail_seg_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.eth_avail_seg_constraints: ExprRef = exprs[0]
+      if 'eth_first_seg_constraints' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['eth_first_seg_constraints'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.eth_first_seg_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.eth_first_seg_constraints: ExprRef = exprs[0]
+      if 'eth_last_desc_constraints' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['eth_last_desc_constraints'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.eth_last_desc_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.eth_last_desc_constraints: ExprRef = exprs[0]
     ############
     ### Misc ###
     ############
@@ -393,41 +498,48 @@ class Synthesizer:
     peripherals: List[SVDPeripheral] = self.device.peripherals
     self.target = None
     for p in peripherals:
-      if p.get_derived_from() is None and p.name == target:
-        self.target = p
-        break
+      if p.get_derived_from() is None and fnmatch.fnmatch(p.name, target):
+        if self.target is None:
+          self.target = [p]
+        else:
+          self.target.append(p)
     if self.target is None:
       print("Failed to locate {}".format(target))
       sys.exit(11)
+    self.target = sorted(self.target, key=lambda x:x._base_address)
     self.offset_to_reg = {}
+    self.regs: List[SVDRegister] = []
     if self.target is not None:
-      regs: List[SVDRegister] = self.target.registers
-      for r in regs:
-        if r.derived_from is not None:
-          for rr in self.target._lookup_possibly_derived_attribute("register_arrays"):
-            if rr.name == r.derived_from:
-              r._fields = rr._fields
-              r._size = rr._size
-              r._access = rr._access
-              r._reset_mask = r._reset_mask
-              r._reset_value = rr._reset_value
-              r.name = r.name.replace('[', '').replace(']', '')
-      # reg_name_regex = re.compile(r'(.*)\[(\d+)\](.*)$')
-      # idx = 0
-      for r in regs:
-        # if r._size != 0x20:
-        #   print("In {}, the size of register {} is not 32 bits, "
-        #         "which is not supported by now.".format(target, r.name))
-        #   sys.exit(2)
-        if r.address_offset not in self.offset_to_reg:
-          self.offset_to_reg[r.address_offset] = r
-        
-        # if (r.address_offset >> 2) != idx and self.has_data_reg:
-        #   print("In {}, the index of register {} is not continuous, "
-        #         "which is not supported by now.".format(target, r.name))
-        #   sys.exit(3)
-        # idx += 1
-      self.regs = regs
+      min_periph_base = self.target[0]._base_address
+      for p in self.target:
+        regs: List[SVDRegister] = p.registers
+        for r in regs:
+          if r.derived_from is not None:
+            for rr in p._lookup_possibly_derived_attribute("register_arrays"):
+              if rr.name == r.derived_from:
+                r._fields = rr._fields
+                r._size = rr._size
+                r._access = rr._access
+                r._reset_mask = r._reset_mask
+                r._reset_value = rr._reset_value
+        # reg_name_regex = re.compile(r'(.*)\[(\d+)\](.*)$')
+        # idx = 0
+        for r in regs:
+          # if r._size != 0x20:
+          #   print("In {}, the size of register {} is not 32 bits, "
+          #         "which is not supported by now.".format(target, r.name))
+          #   sys.exit(2)
+          r.name = r.name.replace('[', '').replace(']', '')
+          r.address_offset += (p._base_address - min_periph_base)
+          if r.address_offset not in self.offset_to_reg:
+            self.offset_to_reg[r.address_offset] = r
+          
+          # if (r.address_offset >> 2) != idx and self.has_data_reg:
+          #   print("In {}, the index of register {} is not continuous, "
+          #         "which is not supported by now.".format(target, r.name))
+          #   sys.exit(3)
+          # idx += 1
+        self.regs += regs
     else:
       self.regs = []
     # sym name to regs
@@ -502,6 +614,12 @@ class Synthesizer:
     self.can_receive_func_name = "{}_can_receive".format(self.full_name)
     self.receive_func_name = "{}_receive".format(self.full_name)
     self.transmit_func_name = "{}_transmit".format(self.full_name)
+    self.eth_info_struct_name = "net_{}_info".format(self.full_name)
+    self.eth_timer_callback_func_name = "{}_timer_callback".format(self.full_name)
+    self.eth_dma_desc_struct_name = "ETH_DMADescTypeDef"
+    self.eth_send_func_name = "{}_net_send".format(self.full_name)
+    self.eth_can_receive_func_name = "{}_net_can_receive".format(self.full_name)
+    self.eth_receive_func_name = "{}_net_receive".format(self.full_name)
     self.src_include.append('{}.h'.format(self.symbol_name))
   
   def __setup_board_ctx(self, y):
@@ -701,20 +819,29 @@ class Synthesizer:
         operand: ExprRef = operand_stack.pop()
         left = operand.arg(0)   # extract
         right = operand.arg(1)  # const
+        is_eth_desc = False
         if is_const(left):
           sym_name: str = left.decl().name()
         else:
           sym_name: str = left.arg(0).decl().name()
         if sym_name not in self.sym_name_to_reg:
-          reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
+          grp = self.sym_name_regex.match(sym_name).groups()
+          reg_offset = int(grp[1])
+          num_bits = int(grp[2])
+          if grp[0] == 'd':
+            is_eth_desc = True
+          else:
+            self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
           # reg_idx = (reg_idx >> 2)
-          self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
-        target_reg = self.sym_name_to_reg[sym_name]
+        if not is_eth_desc:
+          target_reg = self.sym_name_to_reg[sym_name]
         if not is_bv_value(right):
           sub_expr.append("")
         else:
           right_val = right.as_long()
-          if len(value) > 0:
+          if is_eth_desc:
+            lhs = "*((uint{}_t *)(((uint8_t *)&{}) + {}))".format(num_bits, value, reg_offset)
+          elif len(value) > 0:
             lhs = value
           else:
             lhs = '{}->{}'.format(self.periph_instance_name, target_reg.name)
@@ -800,11 +927,18 @@ class Synthesizer:
         sym_name = left.decl().name()
       else:
         sym_name = left.arg(0).decl().name()
+      is_eth = False
       if sym_name not in self.sym_name_to_reg:
-        reg_offset = int(self.sym_name_regex.match(sym_name).groups()[1])
+        grp = self.sym_name_regex.match(sym_name).groups()
+        reg_offset = int(grp[1])
+        num_bits = int(grp[2])
+        if grp[0] == 'd':
+          is_eth = True
+        else:
         # reg_idx = (reg_idx >> 2)
-        self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
-      target_reg = self.sym_name_to_reg[sym_name]
+          self.sym_name_to_reg[sym_name] = self.offset_to_reg[reg_offset]
+      if not is_eth:
+        target_reg = self.sym_name_to_reg[sym_name]
       real_set = is_set ^ needs_negate
       if is_bv_value(right):
         right_val = right.as_long()
@@ -814,7 +948,10 @@ class Synthesizer:
         while extract_low <= extract_high:
           mask |= (1 << extract_low)
           extract_low += 1
-        body = '{}->{}'.format(self.periph_instance_name, target_reg.name)
+        if is_eth:
+          body = "*((uint{}_t *)(((uint8_t *)&{}) + {}))".format(num_bits, value, reg_offset)
+        else:
+          body = '{}->{}'.format(self.periph_instance_name, target_reg.name)
         if real_set:
           body += ' |= {};'.format(hex(mask))
         else:
@@ -829,12 +966,73 @@ class Synthesizer:
       reg_ops.add(body)
     return reg_ops
 
+  def __get_field(self, obj, field) -> str:
+    offset = field[0]
+    start_bit = field[1]
+    num_bits = field[2]
+    body = '((uint8_t*)(&{}))'.format(obj)
+    if offset > 0:
+      body = '(*((uint32_t*)({} + {})))'.format(body, offset)
+    else:
+      body = '(*((uint32_t*)({})))'.format(body, offset)
+    if start_bit > 0:
+      body = '({} >> {})'.format(body, start_bit)
+    if num_bits > 0 and num_bits < 32:
+      mask = 0
+      for i in range(num_bits):
+        mask |= (1 << i)
+      body = '({} & {})'.format(body, hex(mask))
+    return body
+
+  def __set_field(self, obj, field, value) -> str:
+    offset = field[0]
+    start_bit = field[1]
+    num_bits = field[2]
+    body = '((uint8_t*)(&{}))'.format(obj)
+    bit_length = num_bits + start_bit
+    if bit_length <= 32:
+      bit_length = 32
+    if offset > 0:
+      body = '*((uint{}_t*)({} + {}))'.format(bit_length, body, offset)
+    else:
+      body = '*((uint{}_t*)({}))'.format(bit_length, body, offset)
+    tmp = ''
+    if num_bits > 0 and num_bits < 32:
+      mask = 0
+      for i in range(num_bits):
+        mask |= (1 << i)
+      tmp = '({} & {})'.format(value, hex(mask))
+    elif num_bits == 32:
+      tmp = '({})'.format(value)
+    if start_bit > 0:
+      tmp = '({} << {})'.format(tmp, start_bit)
+    zero_expr = '(~({} << {}))'.format(hex(mask), start_bit)
+    return '{0} &= {1}; {0} |= {2}'.format(body, zero_expr, tmp)
+  
+  def __eth_get_eth_desc_rx_buf_len(self, value='') -> str:
+    if isinstance(self.eth_desc_rx_buf_len, int):
+      return 't->{}'.format(self.offset_to_reg[self.eth_desc_rx_buf_len].name)
+    else:
+      return self.__get_field(value, self.eth_desc_rx_buf_len)
+  
+  def __eth_get_next_desc(self, value='') -> str:
+    if self.eth_desc_mem_layout == 'RINGBUF':
+      return self.__get_field(value, self.eth_desc_next_desc)
+    elif self.eth_desc_mem_layout == 'ARRAY':
+      return '{} + {}'.format(value, self.eth_desc_size)
+    else:
+      print("should not happen")
+      exit(2)
+  
   def _gen_header_include(self) -> str:
     body = ''
     for item in self.header_include:
       body += '#include "{}"\n'.format(item)
     if self.has_data_reg:
       for item in self.chardev_include:
+        body += '#include "{}"\n'.format(item)
+    if self.eth_rx_desc_reg_offset is not None:
+      for item in self.eth_include:
         body += '#include "{}"\n'.format(item)
     body += '\n'
     return body
@@ -866,8 +1064,9 @@ struct {0} {{
     content = ''
     # irqs
     num_irq = 0
-    if self.target._interrupts:
-      num_irq = len(self.target._interrupts)
+    for p in self.target:
+      if p._interrupts:
+        num_irq += len(p._interrupts)
     if num_irq > 0:
       content += '\t/* irqs */\n'
       content += '\tqemu_irq irq[{}];\n\n'.format(num_irq)
@@ -888,6 +1087,15 @@ struct {0} {{
       content += '\t/* chardev backend */\n'
       content += '\tCharBackend chr;\n'
       content += '\tguint watch_tag;\n\n'
+    if self.eth_rx_desc_reg_offset is not None:
+      content += '\t/* Network backend */\n'
+      content += '\tNICState *nic;\n'
+      content += '\tNICConf conf;\n\n'
+      content += '\t/* Timer for DMA polling */\n'
+      content += '\tQEMUTimer *timer;\n\n'
+      content += '\t/* additional states */\n'
+      content += '\tuint32_t cur_rx_descriptor;\n\n'
+      content += '\tuint32_t cur_tx_descriptor;\n\n'
     body = body.format(self.struct_name, content)
     return body
 
@@ -901,7 +1109,7 @@ struct {0} {{
   def _gen_src_macros(self) -> str:
     body = ''
     body += '#define {}\t\t\t\t{}\n\n'.format(
-      self.periph_size_def, hex(self.__get_peripheral_size(self.target))
+      self.periph_size_def, hex(self.__get_peripheral_size_lst(self.target))
     )
     for r in self.regs:
       if not self.all_in_one:
@@ -940,6 +1148,8 @@ static void {0}({1} *{2}) {{
       wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.post_writes_constraint, True))
     for s in wc_reset_exprs:
       content += '\t{}\n'.format(s)
+    if self.eth_rx_desc_reg_offset is not None:
+      content += '\t{0}->cur_rx_descriptor = 0;\n\t{0}->cur_tx_descriptor = 0;\n'.format(self.periph_instance_name)
     body = body.format(
       self.register_reset_func_name,
       self.struct_name,
@@ -1055,6 +1265,18 @@ buffer_drained:
     )
     return body
   
+  def _gen_eth_desc_typedef(self) -> str:
+    if self.eth_rx_desc_reg_offset is None:
+      return ''
+    body = \
+"""
+typedef struct {{
+  uint8_t data[{0}];
+}} {1};
+"""
+    body = body.format(self.eth_desc_size, self.eth_dma_desc_struct_name)
+    return body
+  
   def _gen_src_update_func(self) -> str:
     if not self.has_data_reg:
       return ''
@@ -1074,6 +1296,419 @@ static void {0}({1} *{2}) {{
       self.periph_instance_name,
       irq_condition
     )
+    return body
+  
+  def _gen_eth_timer_callback_func(self) -> str:
+    if self.eth_tx_desc_reg_offset is None:
+      return ''
+    body = \
+"""
+static void {5}({1} *t);
+
+static void {0}(void *opaque) {{
+	{1} *eth = ({1}*)opaque;
+	{2} tx_desc;
+
+  if (eth->timer) {{
+		timer_free(eth->timer);
+		eth->timer = NULL;
+	}}
+
+	if (eth->cur_tx_descriptor) {{
+		cpu_physical_memory_read(eth->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+		if (!({3})) {{
+			{4}(eth);
+		}}
+	}}
+
+  if (!(eth->timer)) {{
+		eth->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, {6}, eth);
+	}}
+	timer_mod(eth->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 10);
+}}
+"""
+    body = body.format(
+      self.eth_timer_callback_func_name,
+      self.struct_name,
+      self.eth_dma_desc_struct_name,
+      self.__z3_expr_to_cond(self.eth_avail_seg_constraints, 'tx_desc'),
+      self.eth_send_func_name,
+      self.eth_send_func_name,
+      self.eth_timer_callback_func_name
+    )
+    return body
+  
+  def _gen_eth_can_receive_func(self) -> str:
+    if self.eth_tx_desc_reg_offset is None:
+      return ''
+    body = \
+"""
+static bool {0}(NetClientState* nc) {{
+   return true;
+}}
+"""
+    body = body.format(self.eth_can_receive_func_name)
+    return body
+  
+  def _gen_eth_receive_func(self) -> str:
+    if self.eth_tx_desc_reg_offset is None:
+      return ''
+    body = \
+"""
+static ssize_t {0}(NetClientState *nc, const uint8_t *buf, size_t size) {{
+  {1} *t = qemu_get_nic_opaque(nc);
+	{2} rx_desc, next_desc;
+	uint32_t len_to_receive = size;
+	uint32_t buffer_len;
+	uint32_t init_rx_desc_addr = t->cur_rx_descriptor;
+  uint32_t next_rx_desc_addr = 0;
+
+	if (!init_rx_desc_addr) {{
+		return -1;
+	}}
+
+	do {{
+		cpu_physical_memory_read(t->cur_rx_descriptor, &rx_desc, sizeof(rx_desc));
+		buffer_len = {3};
+		if (buffer_len < len_to_receive) {{
+			cpu_physical_memory_write({4}, buf, buffer_len);
+			// receive unfinished
+			len_to_receive -= buffer_len;
+      {13}
+			cpu_physical_memory_read(next_rx_desc_addr, &next_desc, sizeof(next_desc));
+			// next available?
+			if ({5}) {{
+				// dont own next, make this available
+				{6}
+				// unset last
+				{7}
+				cpu_physical_memory_write(t->cur_rx_descriptor, &rx_desc, sizeof(rx_desc));
+				return -1;
+			}} else {{
+				// make this desc available
+				{6}
+				// unset last
+				{7}
+				// set first if needed
+				if (len_to_receive + buffer_len == size) {{
+					// set first
+					{8}
+				}} else {{
+					// unset first
+					{9}
+				}}
+				// update descriptor
+				cpu_physical_memory_write(t->cur_rx_descriptor, &rx_desc, sizeof(rx_desc));
+        {12}
+				continue;
+			}}
+		}} else {{
+			cpu_physical_memory_write({4}, buf, len_to_receive);
+			// receive finished
+			// set size
+			{10};
+			// unset own
+			{6}
+			// set last
+			{11}
+			if (len_to_receive == size) {{
+				// set first
+				{8}
+			}} else {{
+				// unset first
+				{9}
+			}}
+			len_to_receive = 0;
+			cpu_physical_memory_write(t->cur_rx_descriptor, &rx_desc, sizeof(rx_desc));
+      {12}
+			break;
+		}}
+	}} while(true);
+	return size;
+}}
+"""
+    make_avail_exprs = self.__z3_expr_to_reg(self.eth_avail_seg_constraints, True, "rx_desc")
+    make_avail_expr = ''
+    for ae in make_avail_exprs:
+      make_avail_expr += '{}\n'.format(ae)
+    unset_last_exprs = self.__z3_expr_to_reg(self.eth_last_seg_constraints, False, "rx_desc")
+    unset_last_expr = ''
+    for ae in unset_last_exprs:
+      unset_last_expr += '{}\n'.format(ae)
+    set_last_exprs = self.__z3_expr_to_reg(self.eth_last_seg_constraints, True, "rx_desc")
+    set_last_expr = ''
+    for ae in set_last_exprs:
+      set_last_expr += '{}\n'.format(ae)
+    set_first_exprs = set()
+    if self.eth_first_seg_constraints is not None:
+      set_first_exprs = self.__z3_expr_to_reg(self.eth_first_seg_constraints, True, "rx_desc")
+    set_first_expr = ''
+    for ae in set_first_exprs:
+      set_first_expr += '{}\n'.format(ae)
+    unset_first_exprs = set()
+    if self.eth_first_seg_constraints is not None:
+      unset_first_exprs = self.__z3_expr_to_reg(self.eth_first_seg_constraints, False, "rx_desc")
+    unset_first_expr = ''
+    for ae in unset_first_exprs:
+      unset_first_expr += '{}\n'.format(ae)
+
+    check_next_desc_expr = ''
+    get_next_get_check_expr = ''
+    val_to_use = ''
+    if self.eth_desc_mem_layout == 'ARRAY':
+      val_to_use = 't->cur_rx_descriptor'
+      check_next_desc_expr = 'if ({}) {{ t->cur_rx_descriptor = t->{}; }} else {{ t->cur_rx_descriptor = {}; }}'.format(
+        self.__z3_expr_to_cond(self.eth_last_desc_constraints, "rx_desc"),
+        self.offset_to_reg[self.eth_rx_desc_reg_offset].name,
+        self.__eth_get_next_desc(val_to_use)
+      )
+      get_next_get_check_expr = 'if ({}) {{ next_rx_desc_addr = t->{}; }} else {{ next_rx_desc_addr = {}; }}'.format(
+        self.__z3_expr_to_cond(self.eth_last_desc_constraints, "rx_desc"),
+        self.offset_to_reg[self.eth_rx_desc_reg_offset].name,
+        self.__eth_get_next_desc(val_to_use)
+      )
+    elif self.eth_desc_mem_layout == 'RINGBUF':
+      val_to_use = 'rx_desc'
+      check_next_desc_expr = 't->cur_rx_descriptor = {};'.format(
+        self.__eth_get_next_desc(val_to_use))
+      get_next_get_check_expr = 'next_rx_desc_addr = {};'.format(
+        self.__eth_get_next_desc(val_to_use))
+      
+    body = body.format(
+      self.eth_receive_func_name,
+      self.struct_name,
+      self.eth_dma_desc_struct_name,
+      self.__eth_get_eth_desc_rx_buf_len('rx_desc'),
+      self.__get_field("rx_desc", self.eth_desc_buf),
+      self.__z3_expr_to_cond(self.eth_avail_seg_constraints, "next_desc"),
+      make_avail_expr,
+      unset_last_expr,
+      set_first_expr,
+      unset_first_expr,
+      self.__set_field('rx_desc', self.eth_desc_rx_frame_len, '(size + 4)'),
+      set_last_expr,
+      check_next_desc_expr,
+      get_next_get_check_expr
+    )
+    return body
+  
+  def _gen_eth_send_func(self) -> str:
+    if self.eth_tx_desc_reg_offset is None:
+      return ''
+    if self.eth_first_seg_constraints is not None:
+      body = \
+"""
+static void {0}({1} *t) {{
+	uint32_t init_tx_desc_addr = t->cur_tx_descriptor;
+	{2} tx_desc;
+	int frame_len = 0;
+	uint32_t start_tx_desc_addr = 0;
+	uint32_t end_tx_desc_addr = 0;
+  uint32_t next_tx_desc_addr = 0;
+	uint8_t *buf;
+	uint8_t *trans_buf;
+
+	if (t->cur_tx_descriptor) {{
+		do {{
+			cpu_physical_memory_read(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+			if (!({3})) {{
+				if (({4}) && ({5})) {{
+					// last and first
+					frame_len += {6};
+					end_tx_desc_addr = t->cur_tx_descriptor;
+					start_tx_desc_addr = t->cur_tx_descriptor;
+					break;
+				}} else if ({4}) {{
+					// last
+					frame_len += {6};
+					end_tx_desc_addr = t->cur_tx_descriptor;
+					break;
+				}} else if ({5}) {{
+					// first
+					frame_len += {6};
+					start_tx_desc_addr = t->cur_tx_descriptor;
+				}} else {{
+					// inter
+					frame_len += {6};
+				}}
+			}}
+      {7}
+			t->cur_tx_descriptor = next_tx_desc_addr;
+		}} while (next_tx_desc_addr != init_tx_desc_addr);
+
+		if (start_tx_desc_addr && end_tx_desc_addr && frame_len) {{
+			assert(frame_len > 14);
+			buf = g_malloc(frame_len);
+			trans_buf = buf;
+			init_tx_desc_addr = start_tx_desc_addr;
+			t->cur_tx_descriptor = start_tx_desc_addr;
+			do {{
+				cpu_physical_memory_read(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+				if (!({3})) {{
+					// transfer it
+					cpu_physical_memory_read({8}, trans_buf, {6});
+					frame_len -= ({6});
+					if (frame_len <=0) {{
+						// done!
+						trans_buf += ({6});
+						break;
+					}} else {{
+						trans_buf += ({6});
+					}}
+					{9}
+					cpu_physical_memory_write(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+          {7}
+					t->cur_tx_descriptor = next_tx_desc_addr;
+				}} else {{
+					// dont own
+					free(buf);
+					return;
+				}}
+			}} while (next_tx_desc_addr != init_tx_desc_addr);
+			assert(frame_len <= 0);
+			frame_len = trans_buf - buf;
+			qemu_send_packet(qemu_get_queue(t->nic), buf, frame_len);
+			free(buf);
+			{9}
+			cpu_physical_memory_write(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+      {7}
+			t->cur_tx_descriptor = next_tx_desc_addr;
+		}}
+	}}
+}}
+"""
+      make_avail_exprs = self.__z3_expr_to_reg(self.eth_avail_seg_constraints, True, "tx_desc")
+      make_avail_expr = ''
+      for ae in make_avail_exprs:
+        make_avail_expr += '{}\n'.format(ae)
+
+      get_next_desc_expr = ''
+      if self.eth_desc_mem_layout == 'RINGBUF':
+        get_next_desc_expr = 'next_tx_desc_addr = {};'.format(
+          self.__eth_get_next_desc('tx_desc'))
+      elif self.eth_desc_mem_layout == 'ARRAY':
+        get_next_desc_expr = 'if ({}) {{ next_tx_desc_addr = t->{}; }} else {{ next_tx_desc_addr = {}; }}'.format(
+          self.__z3_expr_to_cond(self.eth_last_desc_constraints, "tx_desc"),
+          self.offset_to_reg[self.eth_tx_desc_reg_offset].name,
+          self.__eth_get_next_desc('t->cur_tx_descriptor')
+        )
+
+      body = body.format(
+        self.eth_send_func_name,
+        self.struct_name,
+        self.eth_dma_desc_struct_name,
+        self.__z3_expr_to_cond(self.eth_avail_seg_constraints, "tx_desc"),
+        self.__z3_expr_to_cond(self.eth_last_seg_constraints, "tx_desc"),
+        self.__z3_expr_to_cond(self.eth_first_seg_constraints, "tx_desc"),
+        self.__get_field("tx_desc", self.eth_desc_tx_buf_len),
+        get_next_desc_expr,
+        self.__get_field("tx_desc", self.eth_desc_buf),
+        make_avail_expr,
+        self.eth_timer_callback_func_name
+      )
+    else:
+      body = \
+"""
+static void {0}({1} *t) {{
+	uint32_t init_tx_desc_addr = t->cur_tx_descriptor;
+	{2} tx_desc;
+	int frame_len = 0;
+	uint32_t start_tx_desc_addr = 0;
+	uint32_t end_tx_desc_addr = 0;
+  uint32_t next_tx_desc_addr = 0;
+	uint8_t *buf;
+	uint8_t *trans_buf;
+
+	if (t->cur_tx_descriptor) {{
+		do {{
+			cpu_physical_memory_read(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+			if (!({3})) {{
+        if (!start_tx_desc_addr) {{
+          start_tx_desc_addr = init_tx_desc_addr;
+        }}
+				if ({4}) {{
+					// last
+					frame_len += {5};
+					end_tx_desc_addr = t->cur_tx_descriptor;
+					break;
+				}} else {{
+					// first or inter
+					frame_len += {5};
+				}}
+			}}
+      {6}
+			t->cur_tx_descriptor = next_tx_desc_addr;
+		}} while (next_tx_desc_addr != init_tx_desc_addr);
+
+		if (start_tx_desc_addr && end_tx_desc_addr && frame_len) {{
+			assert(frame_len > 14);
+			buf = g_malloc(frame_len);
+			trans_buf = buf;
+			init_tx_desc_addr = start_tx_desc_addr;
+			t->cur_tx_descriptor = start_tx_desc_addr;
+			do {{
+				cpu_physical_memory_read(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+				if (!({3})) {{
+					// transfer it
+					cpu_physical_memory_read({7}, trans_buf, {5});
+					frame_len -= ({5});
+					if (frame_len <=0) {{
+						// done!
+						trans_buf += ({5});
+						break;
+					}} else {{
+						trans_buf += ({5});
+					}}
+					{8}
+					cpu_physical_memory_write(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+          {6}
+					t->cur_tx_descriptor = next_tx_desc_addr;
+				}} else {{
+					// dont own
+					free(buf);
+					return;
+				}}
+			}} while (next_tx_desc_addr != init_tx_desc_addr);
+			assert(frame_len <= 0);
+			frame_len = trans_buf - buf;
+			qemu_send_packet(qemu_get_queue(t->nic), buf, frame_len);
+			free(buf);
+			{8}
+			cpu_physical_memory_write(t->cur_tx_descriptor, &tx_desc, sizeof(tx_desc));
+      {6}
+			t->cur_tx_descriptor = next_tx_desc_addr;
+		}}
+	}}
+}}
+"""
+      make_avail_exprs = self.__z3_expr_to_reg(self.eth_avail_seg_constraints, True, "tx_desc")
+      make_avail_expr = ''
+      for ae in make_avail_exprs:
+        make_avail_expr += '{}\n'.format(ae)
+
+      get_next_desc_expr = ''
+      if self.eth_desc_mem_layout == 'RINGBUF':
+        get_next_desc_expr = 'next_tx_desc_addr = {};'.format(
+          self.__eth_get_next_desc('tx_desc'))
+      elif self.eth_desc_mem_layout == 'ARRAY':
+        get_next_desc_expr = 'if ({}) {{ next_tx_desc_addr = t->{}; }} else {{ next_tx_desc_addr = {}; }}'.format(
+          self.__z3_expr_to_cond(self.eth_last_desc_constraints, "tx_desc"),
+          self.offset_to_reg[self.eth_tx_desc_reg_offset].name,
+          self.__eth_get_next_desc('t->cur_tx_descriptor')
+        )
+
+      body = body.format(
+        self.eth_send_func_name,
+        self.struct_name,
+        self.eth_dma_desc_struct_name,
+        self.__z3_expr_to_cond(self.eth_avail_seg_constraints, "tx_desc"),
+        self.__z3_expr_to_cond(self.eth_last_seg_constraints, "tx_desc"),
+        self.__get_field("tx_desc", self.eth_desc_tx_buf_len),
+        get_next_desc_expr,
+        self.__get_field("tx_desc", self.eth_desc_buf),
+        make_avail_expr,
+        self.eth_timer_callback_func_name
+      )
     return body
   
   def _gen_src_read_func(self) -> str:
@@ -1228,6 +1863,13 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\t\t{}({});\n'.format(
           self.update_func_name, self.periph_instance_name
         )
+      
+      if r.address_offset == self.eth_rx_desc_reg_offset:
+        content += '\t\t\t{}->cur_rx_descriptor = value;\n'.format(
+          self.periph_instance_name)
+      if r.address_offset == self.eth_tx_desc_reg_offset:
+        content += '\t\t\t{}->cur_tx_descriptor = value;\n'.format(
+          self.periph_instance_name)
       content += '\t\t\tbreak;\n'
     body = body.format(
       self.write_func_name,
@@ -1253,7 +1895,25 @@ static const MemoryRegionOps {0} = {{
       self.ops_struct_name, self.read_func_name, self.write_func_name
     )
     return body
-  
+
+  def _gen_eth_info_struct(self) -> str:
+    if self.eth_rx_desc_reg_offset is None:
+      return ''
+    body = \
+"""
+static NetClientInfo {0} = {{
+    .type = NET_CLIENT_DRIVER_NIC,
+    .size = sizeof(NICState),
+    .can_receive = {1},
+    .receive = {2},
+}};
+"""
+    body = body.format(
+      self.eth_info_struct_name,
+      self.eth_can_receive_func_name,
+      self.eth_receive_func_name)
+    return body
+
   def _gen_src_instance_init_func(self) -> str:
     body = \
 """
@@ -1267,8 +1927,9 @@ static void {0}(Object *obj) {{
 """
     content = ''
     num_irq = 0
-    if self.target._interrupts:
-      num_irq = len(self.target._interrupts)
+    for p in self.target:
+      if p._interrupts:
+        num_irq = len(p._interrupts)
     if num_irq > 0:
       content += '\tfor (int i = 0; i < {}; ++i) {{\n'.format(num_irq)
       content += '\t\tsysbus_init_irq(sbd, &({}->irq[i]));\n'.format(
@@ -1306,6 +1967,22 @@ static void {0}(DeviceState *dev, Error **errp) {{
         self.periph_instance_name,
         self.can_receive_func_name,
         self.receive_func_name
+      )
+    elif self.eth_rx_desc_reg_offset is not None:
+      content += '\t{} *{} = {}(dev);\n\n'.format(
+        self.struct_name, self.periph_instance_name, self.full_name_upper
+      )
+      tmp = "\tqemu_macaddr_default_if_unset(&{0}->conf.macaddr);\n"   \
+            "\t{0}->nic = qemu_new_nic(\n"  \
+            "\t\t&{1}, &{0}->conf,\n"       \
+            "\t\tobject_get_typename(OBJECT(dev)), dev->id, {0});\n"  \
+            "\tqemu_format_nic_info_str(qemu_get_queue({0}->nic), {0}->conf.macaddr.a);\n" \
+            "\t{0}->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, {2}, {0});"  \
+            "\ttimer_mod({0}->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 10);"
+      content += tmp.format(
+        self.periph_instance_name,
+        self.eth_info_struct_name,
+        self.eth_timer_callback_func_name
       )
     else:
       content += '\treturn;\n'
@@ -1351,6 +2028,16 @@ static const VMStateDescription {0} = {{
     return body
 
   def _gen_src_properties_struct(self) -> str:
+    if self.eth_rx_desc_reg_offset is not None:
+      body = \
+"""
+static Property {0}[] = {{
+\tDEFINE_NIC_PROPERTIES({1}, conf),
+\tDEFINE_PROP_END_OF_LIST()
+}};
+"""
+      body = body.format(self.properties_struct_name, self.struct_name)
+      return body
     if not self.has_data_reg:
       return ''
     body = \
@@ -1376,7 +2063,7 @@ static void {0}(ObjectClass *oc, void *data) {{
 }}
 """
     content = ''
-    if self.has_data_reg:
+    if self.has_data_reg or self.eth_rx_desc_reg_offset is not None:
       content += '\tdevice_class_set_props(dc, {});\n'.format(
         self.properties_struct_name
       )
@@ -1486,24 +2173,56 @@ static void {0}(MachineState *machine) {{
       periph_struct_name = '{}{}'.format(self.prefix_upper, bp_kind.upper())
       periph_type_def = 'TYPE_{}_{}'.format(self.prefix_upper, bp_kind).upper()
       for i in ins:
+        is_pattern = False
+        if '*' in i or '?' in i or '[' in i:
+          is_pattern = True
+        is_eth = False
+        if 'ethernet' in i.lower() or 'enet' in i.lower():
+          is_eth = True
+        if is_eth:
+          content += '\tqemu_check_nic_model(&nd_table[0], "{}");\n'.format(
+            self.machine_name
+          )
         ptr_name = 'p{}'.format(cnt)
         cnt += 1
         content += '\t{0} *{1} = g_new({0}, 1);\n'.format(
           periph_struct_name, ptr_name
         )
-        content += '\tobject_initialize_child(OBJECT(sms), \"{}\", {}, {});\n'.format(
-          i, ptr_name, periph_type_def
-        )
+        if is_pattern:
+          content += '\tobject_initialize_child(OBJECT(sms), \"{}\", {}, {});\n'.format(
+            bp_kind, ptr_name, periph_type_def
+          )
+        else:
+          content += '\tobject_initialize_child(OBJECT(sms), \"{}\", {}, {});\n'.format(
+            i, ptr_name, periph_type_def
+          )
+        if is_eth:
+          content += '\tqdev_set_nic_properties(DEVICE({}), &nd_table[0]);\n'.format(ptr_name)
         content += '\tsysbus_realize(SYS_BUS_DEVICE({}), &error_fatal);\n'.format(ptr_name)
-        i_irq: List[SVDInterrupt] = self.name_to_peripheral[i]._interrupts
+        if not is_pattern:
+          i_irq: List[SVDInterrupt] = self.name_to_peripheral[i]._interrupts
+        else:
+          i_irq = []
+          p_bases = []
+          for p in self.device.peripherals:
+            if fnmatch.fnmatch(p.name, i):
+              p_bases.append(self.__get_peripheral_base(p))
+              if p._interrupts:
+                i_irq += p._interrupts
+          p_bases = sorted(p_bases)
         if i_irq is not None:
           for irq_idx in range(len(i_irq)):
             content += '\tsysbus_connect_irq(SYS_BUS_DEVICE({}), {}, qdev_get_gpio_in(DEVICE(&(sms->armv7m)), {}));\n'.format(
               ptr_name, irq_idx, i_irq[irq_idx].value
             )
-        content += '\tsysbus_mmio_map(SYS_BUS_DEVICE({}), 0, {});\n\n'.format(
-          ptr_name, hex(self.__get_peripheral_base(self.name_to_peripheral[i]))
-        )
+        if not is_pattern:
+          content += '\tsysbus_mmio_map(SYS_BUS_DEVICE({}), 0, {});\n\n'.format(
+            ptr_name, hex(self.__get_peripheral_base(self.name_to_peripheral[i]))
+          )
+        else:
+          content += '\tsysbus_mmio_map(SYS_BUS_DEVICE({}), 0, {});\n\n'.format(
+            ptr_name, hex(p_bases[0])
+          )
     body = body.format(
       self.board_periph_init_func_name,
       self.machine_state_struct_name,
@@ -1663,7 +2382,12 @@ type_init({0});
     generator_list = [
       self._gen_src_include,
       self._gen_src_macros,
+      self._gen_eth_desc_typedef,
       self._gen_src_update_func,
+      self._gen_eth_timer_callback_func,
+      self._gen_eth_can_receive_func,
+      self._gen_eth_receive_func,
+      self._gen_eth_send_func,
       self._gen_src_can_receive,
       self._gen_src_receive,
       self._gen_src_transmit,
@@ -1671,6 +2395,7 @@ type_init({0});
       self._gen_src_read_func,
       self._gen_src_write_func,
       self._gen_src_ops_struct,
+      self._gen_eth_info_struct,
       self._gen_src_instance_init_func,
       self._gen_src_realize_func,
       self._gen_src_reset_enter_func,
@@ -1717,10 +2442,15 @@ type_init({0});
     if 'additional-bitcode' in p:
       for abc in p['additional-bitcode']:
         additional_bc.append(str(config_file_path.parent / abc))
+    target_periph_base = []
+    for ppp in self.device.peripherals:
+      if fnmatch.fnmatch(ppp.name, target):
+        target_periph_base.append(self.__get_peripheral_base(ppp))
+    target_periph_base = sorted(target_periph_base)
     addon_cmd = [
       "--target-periph-struct={}".format(target_struct),
       "--target-periph-address={}".format(
-        hex(self.__get_peripheral_base(self.name_to_peripheral[target]))
+        hex(target_periph_base[0])
       ),
       "--perry-out-file={}".format(out_file),
     ]
