@@ -2238,12 +2238,10 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
               RegConstraint.push_back(CP.condition);
             }
           }
-          if (!isUniqueConstraints(unique_constraints_read, RegConstraint)) {
-            continue;
+          if (isIRQ) {
+            isUniqueConstraints(unique_constraints_irq, RegConstraint);
           } else {
-            if (isIRQ) {
-              unique_constraints_irq.push_back(RegConstraint);
-            }
+            isUniqueConstraints(unique_constraints_read, RegConstraint);
           }
         } else {
           // writtenDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
@@ -2275,12 +2273,10 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
               RegConstraint.push_back(CP.condition);
             }
           }
-          if (!isUniqueConstraints(unique_constraints_write, RegConstraint)) {
-            continue;
+          if (isIRQ) {
+            isUniqueConstraints(unique_constraints_irq, RegConstraint);
           } else {
-            if (isIRQ) {
-              unique_constraints_irq.push_back(RegConstraint);
-            }
+            isUniqueConstraints(unique_constraints_write, RegConstraint);
           }
         }
       }
