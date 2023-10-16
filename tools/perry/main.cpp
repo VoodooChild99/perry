@@ -2199,7 +2199,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       std::vector<ref<PerryExpr>> lastWriteConstraint;
       unsigned last_write_idx = 0;
       bool hasWrite = false;
-      bool hasRead = false;
       bool hasNonDataRead = false;
       for (auto &PTI : trace) {
         auto &cur_access = reg_accesses[PTI.reg_access_idx];
@@ -2230,7 +2229,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
         
         if (cur_access->AccessType == RegisterAccess::REG_READ) {
-          hasRead = true;
           // readDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
           readDataRegIdx.insert(cur_access->offset);
           for (auto &CP : checkpoints) {
@@ -2307,17 +2305,25 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
 
         // dependent non-data register reads
-        if (!hasRead && !hasWrite && hasNonDataRead) {
+        if (hasNonDataRead) {
           // infer reg linkage
           // case 1: two adjacent in-constraint reads
           // case 2: a in-constraint read and previous writes
           bool last_is_read = false;
+          bool last_is_data = false;
 
           unsigned trace_size = trace.size();
           for (unsigned i = 0; i < trace_size; ++i) {
             auto &PTI = trace[i];
             // unsigned num_cs = PTI.cur_constraints.size();
             auto &cur_access = reg_accesses[PTI.reg_access_idx];
+
+            // skip data register accesses
+            if (readDataRegIdx.find(cur_access->offset) != readDataRegIdx.end()) {
+              last_is_read = false;
+              last_is_data = true;
+              continue;
+            }
 
             if (cur_access->AccessType == RegisterAccess::REG_READ) {
               if (last_is_read) {
@@ -2346,7 +2352,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                                       final_constraints, trace, i, rrDepMap);
                   }
                 }
-              } else if (!last_is_read && i > 0) {
+              } else if (!last_is_read && i > 0 && !last_is_data) {
                 if (inLoopCondition(cur_access->place, LoopRanges) > 0) {
                   bool blacklisted = false;
                   for (auto &cp : checkpoints) {
@@ -2370,6 +2376,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             } else {
               last_is_read = false;
             }
+            last_is_data = false;
           }
 
           // deal with checkpoints
@@ -2382,11 +2389,21 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             if (cur_access->AccessType != RegisterAccess::REG_READ) {
               continue;
             }
+            if (readDataRegIdx.find(cur_access->offset) != readDataRegIdx.end()) {
+              continue;
+            }
             auto &last_access = reg_accesses[reg_access_size - 2];
+
             if (last_access->AccessType == RegisterAccess::REG_READ) {
+              if (readDataRegIdx.find(last_access->offset) != readDataRegIdx.end()) {
+                continue;
+              }
               inferRRDependenceWithCheckPoint(cp, reg_accesses, trace,
                                               rrDepMap, nm, LoopRanges);
             } else if (last_access->AccessType == RegisterAccess::REG_WRITE){
+              if (writtenDataRegIdx.find(last_access->offset) != writtenDataRegIdx.end()) {
+                continue;
+              }
               inferWRDependenceWithCheckPoint(cp, reg_accesses, trace,
                                               wrDepMap, LoopRanges, SymName);
             }
