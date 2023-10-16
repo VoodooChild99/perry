@@ -530,9 +530,11 @@ constructULEQFromVector(const z3::expr_vector& left,
     }
     if (local_and.size() == 1) {
       return local_and[0];
-    } else {
-      assert(local_and.size() > 1);
+    } else if (local_and.size() > 1) {
       return z3::mk_and(local_and);
+    } else {
+      // the value is 0xffff.....
+      return ctx.bool_val(true);
     }
   } else {
     // (!syma[sz] & symb[sz]) || ((syma[sz] == symb[sz]) && (...))
