@@ -1310,7 +1310,7 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
       }
     }
   } else if (e.is_bool()) {
-    if (e.is_true() || e.is_false()) {
+    if (e.is_true() || e.is_false() || e.is_const()) {
       result.push_back(e);
       return;
     }
