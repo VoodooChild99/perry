@@ -903,6 +903,9 @@ class Synthesizer:
         set_expr.append(cur)
       elif cur_kind == Z3_OP_EQ:
         set_expr.append(cur)
+      elif cur_kind == Z3_OP_OR:
+        for s in cur.children():
+          WL.append(s)
       else:
         print("Not supported z3 expr {}, ignore".format(cur))
         # sys.exit(8)
