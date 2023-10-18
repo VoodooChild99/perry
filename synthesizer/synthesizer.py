@@ -19,6 +19,8 @@ from cmsis_svd.parser import (
 from typing import List, Mapping, Set, Tuple
 from parse import parse
 
+DEFAULT_TIME_SCALE = 'us'
+
 class Synthesizer:
   def __init__(self, config_file: str, output_dir: str, all_in_one: bool, debug: bool) -> None:
     self.config_file = config_file
@@ -338,6 +340,10 @@ class Synthesizer:
       self.include_function = y['include-function']
     else:
       self.include_function = []
+    if 'time-scale' in y:
+      self.time_scale = y['time-scale']
+    else:
+      self.time_scale = None
 
 
 
@@ -364,6 +370,12 @@ class Synthesizer:
     self.eth_avail_seg_constraints = None
     self.eth_first_seg_constraints = None
     self.eth_last_desc_constraints = None
+    self.timer_period_reg_offset = None
+    self.timer_counter_reg_offset = None
+    self.timer_enable_constraints = None
+    self.timer_disable_constraints = None
+    self.timer_irq_constraints = None
+
     if constraint_file is None:
       self.read_datareg_offset = []
       self.write_datareg_offset = []
@@ -491,6 +503,37 @@ class Synthesizer:
         else:
           assert(len(exprs) == 1)
           self.eth_last_desc_constraints: ExprRef = exprs[0]
+      if 'timer_period_reg_offset' in loaded_json:
+        self.timer_period_reg_offset = loaded_json['timer_period_reg_offset']
+      if 'timer_counter_reg_offset' in loaded_json:
+        self.timer_counter_reg_offset = loaded_json['timer_counter_reg_offset']
+      if 'timer_enable_action' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['timer_enable_action'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.timer_enable_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.timer_enable_constraints: ExprRef = exprs[0]
+      if 'timer_disable_action' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['timer_disable_action'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.timer_disable_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.timer_disable_constraints: ExprRef = exprs[0]
+      if 'timer_irq_cond' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['timer_irq_cond'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.timer_irq_constraints = None
+        else:
+          assert(len(exprs) == 1)
+          self.timer_irq_constraints: ExprRef = exprs[0]
     ############
     ### Misc ###
     ############
@@ -621,6 +664,7 @@ class Synthesizer:
     self.eth_can_receive_func_name = "{}_net_can_receive".format(self.full_name)
     self.eth_receive_func_name = "{}_net_receive".format(self.full_name)
     self.src_include.append('{}.h'.format(self.symbol_name))
+    self.timer_callback_func_name = "{}_timer_callback".format(self.full_name)
   
   def __setup_board_ctx(self, y):
     self.cpu_type_name = y['cpu']
@@ -1103,6 +1147,10 @@ struct {0} {{
       content += '\t/* additional states */\n'
       content += '\tuint32_t cur_rx_descriptor;\n\n'
       content += '\tuint32_t cur_tx_descriptor;\n\n'
+    if self.timer_counter_reg_offset is not None:
+      content += '\t/* timer */\n'
+      content += '\tQEMUTimer *timer;\n'
+      content += '\tuint8_t enabled;\n\n'
     body = body.format(self.struct_name, content)
     return body
 
@@ -1167,6 +1215,8 @@ static void {0}({1} *{2}) {{
       content += '\t{}\n'.format(s)
     if self.eth_rx_desc_reg_offset is not None:
       content += '\t{0}->cur_rx_descriptor = 0;\n\t{0}->cur_tx_descriptor = 0;\n'.format(self.periph_instance_name)
+    if self.timer_counter_reg_offset is not None:
+      content += '\t{}->enabled = 0;\n'.format(self.periph_instance_name)
     body = body.format(
       self.register_reset_func_name,
       self.struct_name,
@@ -1352,6 +1402,45 @@ static void {0}(void *opaque) {{
       self.eth_send_func_name,
       self.eth_send_func_name,
       self.eth_timer_callback_func_name
+    )
+    return body
+  
+  def _gen_timer_callback_func(self) -> str:
+    if self.timer_counter_reg_offset is None:
+      return ''
+    body = \
+"""
+static void {0}(void *opaque) {{
+  {1} *t = ({1}*)opaque;
+
+  t->{2} += 1;
+  if (t->{2} == t->{3}) {{
+    t->{2} = 0;
+    {4};
+    qemu_set_irq(t->irq[0], 1);
+    qemu_set_irq(t->irq[0], 0);
+  }}
+
+  if (t->enabled) {{
+    timer_mod(t->timer, qemu_clock_get_{5}(QEMU_CLOCK_VIRTUAL) + 1);
+  }}
+}}
+"""
+    set_irq_expr = ''
+    for e in self.__z3_expr_to_reg(self.timer_irq_constraints, True):
+      set_irq_expr += e
+    if self.time_scale is None:
+      time_scale = DEFAULT_TIME_SCALE
+    else:
+      time_scale = self.time_scale
+
+    body = body.format(
+      self.timer_callback_func_name,
+      self.struct_name,
+      self.offset_to_reg[self.timer_counter_reg_offset].name,
+      self.offset_to_reg[self.timer_period_reg_offset].name,
+      set_irq_expr,
+      time_scale
     )
     return body
   
@@ -1887,6 +1976,26 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       if r.address_offset == self.eth_tx_desc_reg_offset:
         content += '\t\t\t{}->cur_tx_descriptor = value;\n'.format(
           self.periph_instance_name)
+      if self.timer_counter_reg_offset is not None:
+        enable_reg = self.__collect_related_regs(self.timer_enable_constraints).pop()
+        disable_reg = self.__collect_related_regs(self.timer_disable_constraints).pop()
+        if self.time_scale is None:
+          time_scale = DEFAULT_TIME_SCALE
+        else:
+          time_scale = self.time_scale
+        if r.address_offset == enable_reg:
+          content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_enable_constraints))
+          content += '\t\t\t\t{}->enabled = 1;\n'.format(self.periph_instance_name)
+          content += '\t\t\t\ttimer_mod({}->timer, qemu_clock_get_{}(QEMU_CLOCK_VIRTUAL) + 1);\n'.format(self.periph_instance_name, time_scale)
+          content += '\t\t\t}\n'
+        if r.address_offset == disable_reg:
+          content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_disable_constraints))
+          content += '\t\t\t\t{}->enabled = 0;\n'.format(self.periph_instance_name)
+          content += '\t\t\t\ttimer_free({}->timer);\n'.format(self.periph_instance_name)
+          content += '\t\t\t\t{0}->timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}, {0});\n'.format(
+            self.periph_instance_name, time_scale.upper(),
+            self.timer_callback_func_name)
+          content += '\t\t\t}\n'
       content += '\t\t\tbreak;\n'
     body = body.format(
       self.write_func_name,
@@ -2001,6 +2110,15 @@ static void {0}(DeviceState *dev, Error **errp) {{
         self.eth_info_struct_name,
         self.eth_timer_callback_func_name
       )
+    elif self.timer_counter_reg_offset is not None:
+      if self.time_scale is None:
+        time_scale = DEFAULT_TIME_SCALE
+      else:
+        time_scale = self.time_scale
+      content += '\t{0} *{1} = {2}(dev);\n'.format(
+        self.struct_name, self.periph_instance_name, self.full_name_upper)
+      content += '\t{0}->timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}, {0});\n'.format(
+        self.periph_instance_name, time_scale.upper(), self.timer_callback_func_name)
     else:
       content += '\treturn;\n'
     body = body.format(self.realize_func_name, content)
@@ -2402,6 +2520,7 @@ type_init({0});
       self._gen_eth_desc_typedef,
       self._gen_src_update_func,
       self._gen_eth_timer_callback_func,
+      self._gen_timer_callback_func,
       self._gen_eth_can_receive_func,
       self._gen_eth_receive_func,
       self._gen_eth_send_func,

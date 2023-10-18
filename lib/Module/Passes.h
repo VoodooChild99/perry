@@ -298,6 +298,7 @@ private:
   Field RxBufLen;
   Field DescBuf;
   llvm::BasicBlock *rx_set_length_block = nullptr;
+  bool TargetIsTimer = false;
 
   bool isEthernetPeriph(llvm::StringRef name);
   void analyzeDescRegs(llvm::Module &M);
@@ -307,6 +308,9 @@ private:
   void analyzeDescBuffer(llvm::Module &M);
   void analyzeDescMemLayout(llvm::Module &M);
   void analyzeDescConstraints(llvm::Module &M);
+  bool isTimerPeriph(llvm::StringRef name);
+  void analyzeTimerCounterReg(llvm::Module &M);
+  void analyzeTimerPeriodReg(llvm::Module &M);
   void symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,

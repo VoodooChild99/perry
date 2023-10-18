@@ -3,6 +3,7 @@
 #include "klee/Support/OptionCategories.h"
 #include "klee/Perry/PerryExpr.h"
 #include "klee/Perry/PerryEthInfo.h"
+#include "klee/Perry/PerryTimerInfo.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
@@ -2106,6 +2107,197 @@ void FuncSymbolizePass::analyzeDescConstraints(llvm::Module &M) {
   }
 }
 
+static const std::set<std::string> tim_keywords = {
+  "TIM", "LPTIM", "FTM", "LPTMR", "PIT"
+};
+
+enum DataType {
+  PARAMETER,
+  STRUCT,
+};
+
+struct TimFuncDesc {
+  std::string fname;
+  DataType ty;
+  std::string sname;
+  int data_idx;
+};
+
+static const std::vector<TimFuncDesc> set_timer_period_funcs = {
+  TimFuncDesc {
+    .fname = "LL_TIM_SetAutoReload",
+    .ty = PARAMETER,
+    .sname = "",
+    .data_idx = 1,
+  },
+};
+
+static const std::vector<TimFuncDesc> set_timer_cnt_funcs = {
+  TimFuncDesc {
+    .fname = "LL_TIM_SetCounter",
+    .ty = PARAMETER,
+    .sname = "",
+    .data_idx = 1,
+  },
+};
+
+static const std::vector<std::string> enable_timer_funcs = {
+  "LL_TIM_EnableCounter",
+};
+
+bool FuncSymbolizePass::isTimerPeriph(llvm::StringRef name) {
+  for (auto &k : tim_keywords) {
+    if (name.startswith_insensitive(k)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void FuncSymbolizePass::analyzeTimerPeriodReg(llvm::Module &M) {
+  const DataLayout &DL = M.getDataLayout();
+  for (auto &F : M) {
+    if (F.isDeclaration() || F.isDebugInfoForProfiling()) {
+      continue;
+    }
+    for (auto &sf : set_timer_period_funcs) {
+      if (!F.getName().equals(sf.fname)) {
+        continue;
+      }
+      std::set<Value *> src_ops;
+      if (sf.ty == STRUCT) {
+        for (auto &B : F) {
+          for (auto &I : B) {
+            LoadInst *LI = dyn_cast<LoadInst>(&I);
+            if (!LI) {
+              continue;
+            }
+            if (!isLoadTargetField(LI, sf.sname, sf.data_idx)) {
+              continue;
+            }
+            src_ops.insert(LI);
+          }
+        }
+      } else {
+        src_ops.insert(F.getArg(sf.data_idx));
+      }
+      
+      for (auto &B : F) {
+        for (auto &I : B) {
+          StoreInst *SI = dyn_cast<StoreInst>(&I);
+          if (!SI) {
+            continue;
+          }
+          Value *val = SI->getValueOperand();
+          Value *ptr = SI->getPointerOperand();
+          // check if ptr is extracted from target peripheral
+          if (!isa<GetElementPtrInst>(ptr)) {
+            continue;
+          }
+          GetElementPtrInst *GEPI = cast<GetElementPtrInst>(ptr);
+          Type *SrcElemTy = GEPI->getPointerOperandType()->getPointerElementType();
+          if (!SrcElemTy->isStructTy() ||
+              !SrcElemTy->getStructName().equals(PeripheralPlaceholder)) {
+            continue;
+          }
+          if (GEPI->getNumIndices() != 2) {
+            return;
+          }
+          ConstantInt *CI = cast<ConstantInt>(GEPI->getOperand(2));
+          if (!CI) {
+            return;
+          }
+          StructType *TargetStructTy = cast<StructType>(SrcElemTy);
+          // check if value is from period
+          for (auto so : src_ops) {
+            int num_bits = 0, start_pos = 0;
+            if (!isFromValue(val, so, DL, num_bits, start_pos)) {
+              continue;
+            }
+            // bingo!
+            perry_timer_info->period_reg_offset = M.getDataLayout().getStructLayout(TargetStructTy)->getElementOffset(CI->getZExtValue());
+            errs() << "Found Timer Period Register: offset=" << perry_timer_info->period_reg_offset << "\n";
+            break;
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
+void FuncSymbolizePass::analyzeTimerCounterReg(llvm::Module &M) {
+  const DataLayout &DL = M.getDataLayout();
+  for (auto &F : M) {
+    if (F.isDeclaration() || F.isDebugInfoForProfiling()) {
+      continue;
+    }
+    for (auto &sf : set_timer_cnt_funcs) {
+      if (!F.getName().equals(sf.fname)) {
+        continue;
+      }
+      std::set<Value *> src_ops;
+      if (sf.ty == STRUCT) {
+        for (auto &B : F) {
+          for (auto &I : B) {
+            LoadInst *LI = dyn_cast<LoadInst>(&I);
+            if (!LI) {
+              continue;
+            }
+            if (!isLoadTargetField(LI, sf.sname, sf.data_idx)) {
+              continue;
+            }
+            src_ops.insert(LI);
+          }
+        }
+      } else {
+        src_ops.insert(F.getArg(sf.data_idx));
+      }
+      
+      for (auto &B : F) {
+        for (auto &I : B) {
+          StoreInst *SI = dyn_cast<StoreInst>(&I);
+          if (!SI) {
+            continue;
+          }
+          Value *val = SI->getValueOperand();
+          Value *ptr = SI->getPointerOperand();
+          // check if ptr is extracted from target peripheral
+          if (!isa<GetElementPtrInst>(ptr)) {
+            continue;
+          }
+          GetElementPtrInst *GEPI = cast<GetElementPtrInst>(ptr);
+          Type *SrcElemTy = GEPI->getPointerOperandType()->getPointerElementType();
+          if (!SrcElemTy->isStructTy() ||
+              !SrcElemTy->getStructName().equals(PeripheralPlaceholder)) {
+            continue;
+          }
+          if (GEPI->getNumIndices() != 2) {
+            return;
+          }
+          ConstantInt *CI = cast<ConstantInt>(GEPI->getOperand(2));
+          if (!CI) {
+            return;
+          }
+          StructType *TargetStructTy = cast<StructType>(SrcElemTy);
+          // check if value is from period
+          for (auto so : src_ops) {
+            int num_bits = 0, start_pos = 0;
+            if (!isFromValue(val, so, DL, num_bits, start_pos)) {
+              continue;
+            }
+            // bingo!
+            perry_timer_info->counter_reg_offset = M.getDataLayout().getStructLayout(TargetStructTy)->getElementOffset(CI->getZExtValue());
+            errs() << "Found Timer Counter Register: offset=" << perry_timer_info->counter_reg_offset << "\n";
+            break;
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
 bool FuncSymbolizePass::runOnModule(Module &M) {
   if (TargetStruct.empty()) {
     klee_warning("Peripheral placeholder is absent.");
@@ -2116,6 +2308,7 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
   }
 
   TargetIsETH = isEthernetPeriph(TargetStruct);
+  TargetIsTimer = isTimerPeriph(TargetStruct);
 
   PeripheralPlaceholder = "struct." + TargetStruct;
 
@@ -2246,6 +2439,11 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     analyzeDescMemLayout(M);
     analyzeDescRxBufferLen(M);
     analyzeDescConstraints(M);
+  }
+
+  if (changed && TargetIsTimer) {
+    analyzeTimerPeriodReg(M);
+    analyzeTimerCounterReg(M);
   }
 
   return changed;
