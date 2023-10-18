@@ -1,0 +1,127 @@
+svd: STM32L152.svd
+
+prefix: STM32L1
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../HAL-Collection/STM/STM32L152/build/libhal-STM32L152.bca
+
+loop-file: ./loops.yaml
+
+peripheral_workload:
+  -
+    target: PWR
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_pwr.bc
+    target-struct: PWR_TypeDef
+    constraint_file: perry-stm32l1-pwr.json
+  -
+    target: Flash
+  -
+    target: RCC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_rcc.bc
+    target-struct: RCC_TypeDef
+    constraint_file: perry-stm32l1-rcc.json
+  -
+    target: TIM2
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32l1-tim.json
+  -
+    target: EXTI
+  -
+    target: USART1
+    kind: USART
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_uart.bc
+    target-struct: USART_TypeDef
+    constraint_file: perry-stm32l1-usart.json
+  -
+    target: GPIOA
+  -
+    target: SPI1
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_spi.bc
+    target-struct: SPI_TypeDef
+    constraint_file: perry-stm32l1-spi.json
+  -
+    target: I2C1
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32l1-i2c.json
+  -
+    target: ADC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L152/build/stm32l1xx_hal_adc_ex.bc
+    target-struct: ADC_TypeDef
+    constraint_file: perry-stm32l1-adc.json
+  -
+    target: DMA1
+    kind: DMA
+  -
+    target: IWDG
+
+board_config:
+  cpu: cortex-m3
+  machine_name: stm32l152
+  clk_freq: 72000000
+  num_irq: 256
+  init_vtor: 0x08000000
+  bitband: true
+
+  memory:
+    -
+      name: main-flash
+      base: 0x08000000
+      size: 0x00080000
+      type: flash
+    -
+      name: option-bytes
+      base: 0x1ffff000
+      size: 0x00000810
+      type: rom
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00014000
+      type: ram
+
+  peripheral:
+    -
+      kind: TIM2
+      instance: [TIM2, TIM3, TIM4, TIM5]
+    -
+      kind: ADC
+    -
+      kind: USART
+      instance: [USART1, USART2]
+    -
+      kind: PWR
+    -
+      kind: RCC
+    -
+      kind: Flash
+    -
+      kind: EXTI
+    -
+      kind: GPIOA
+      instance: [GPIOA, GPIOB, GPIOC, GPIOD, GPIOE, GPIOF, GPIOG, GPIOH]
+    -
+      kind: SPI
+      instance: [SPI1, SPI2, SPI3]
+    -
+      kind: I2C
+      instance: [I2C1, I2C2]
+    -
+      kind: DMA
+      instance: [DMA1, DMA2]
+    -
+      kind: IWDG
