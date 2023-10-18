@@ -738,8 +738,7 @@ class Synthesizer:
         )
     return expr
   
-  def __collect_related_regs(self, expr: ExprRef) \
-        -> Tuple[Set[int], Mapping[str, SVDRegister]]:
+  def __collect_related_regs(self, expr: ExprRef) -> Set[int]:
     reg_offset_set: Set[int] = set()
     if expr is None:
       return reg_offset_set
