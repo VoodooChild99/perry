@@ -204,6 +204,14 @@ struct PerryCheckPointInternal {
   }
 };
 
+struct PerryHook {
+  const std::string &hook_name;
+  PerryTrace::Constraints constraints;
+
+  PerryHook(const std::string &hook_name, const PerryTrace::Constraints &constraints)
+    : hook_name(hook_name), constraints(constraints) {}
+};
+
 struct PerryRecord {
   bool success = false;
   uint64_t return_value = 0xdeadbeef;
@@ -211,17 +219,20 @@ struct PerryRecord {
   std::vector<ref<RegisterAccess>> register_accesses;
   PerryTrace trace;
   std::vector<PerryCheckPoint> checkpoints;
+  std::vector<PerryHook> triggerred_hooks;
   
   PerryRecord(bool _success, uint64_t _return_value,
               const PerryTrace::Constraints &_final_constraints,
               const std::vector<ref<RegisterAccess>> &_register_accesses,
               const PerryTrace &_trace,
-              const std::vector<PerryCheckPoint> &_checkpoints)
+              const std::vector<PerryCheckPoint> &_checkpoints,
+              const std::vector<PerryHook> &_triggerred_hooks)
     : success(_success), return_value(_return_value),
       final_constraints(std::move(_final_constraints)),
       register_accesses(std::move(_register_accesses)),
       trace(std::move(_trace)),
-      checkpoints(std::move(_checkpoints)) {}
+      checkpoints(std::move(_checkpoints)),
+      triggerred_hooks(std::move(_triggerred_hooks)) {}
 };
 
 }

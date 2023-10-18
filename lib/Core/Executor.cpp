@@ -471,7 +471,7 @@ unsigned dumpStates = 0, dumpPTree = 0;
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                    InterpreterHandler *ih, PerryExprManager &_perryExprManager,
                    const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-                   LoopRangeTy &loopRanges)
+                   LoopRangeTy &loopRanges, const std::set<std::string> &FunctionHooks)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
@@ -480,7 +480,8 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       ivcEnabled(false), debugLogBuffer(debugBufferString),
       perryExprManager(_perryExprManager),
       loopExitingBlocks(loopExitingBlocks),
-      loopRanges(loopRanges) {
+      loopRanges(loopRanges),
+      FunctionHooks(FunctionHooks) {
 
 
   const time::Span maxTime{MaxTime};
@@ -2497,6 +2498,17 @@ void Executor::executeCall(ExecutionState &state, KInstruction *ki, Function *f,
     unsigned numFormals = f->arg_size();
     for (unsigned k = 0; k < numFormals; k++)
       bindArgument(kf, k, state, arguments[k].first, &arguments[k].second);
+
+    if (!FunctionHooks.empty()) {
+      auto it = FunctionHooks.find(f->getName().str());
+      if (it != FunctionHooks.end()) {
+        std::vector<ref<PerryExpr>> cur_constraints;
+        for (auto &CE : state.constraints) {
+          cur_constraints.push_back(state.getPerryExpr(perryExprManager, CE));
+        }
+        state.executed_hooks.emplace_back(PerryHook(*it, cur_constraints));
+      }
+    }
   }
 }
 
@@ -4226,7 +4238,8 @@ void Executor::terminateState(ExecutionState &state, bool isNormalExit) {
 
   perryRecords.emplace_back(PerryRecord(isNormalExit, state.retVal,
                                         finalConstraints, state.regAccesses,
-                                        state.pTrace, state.checkPoints));
+                                        state.pTrace, state.checkPoints,
+                                        state.executed_hooks));
 
   interpreterHandler->incPathsExplored();
 
@@ -5970,6 +5983,7 @@ Interpreter *Interpreter::create(LLVMContext &ctx, const InterpreterOptions &opt
                                  InterpreterHandler *ih,
                                  PerryExprManager &_perryExprManager,
                         const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-                        LoopRangeTy &loopRange) {
-  return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks, loopRange);
+                        LoopRangeTy &loopRange,
+                        const std::set<std::string> &FunctionHooks) {
+  return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks, loopRange, FunctionHooks);
 }

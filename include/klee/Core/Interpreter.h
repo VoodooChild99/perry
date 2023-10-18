@@ -132,7 +132,8 @@ public:
                              InterpreterHandler *ih,
                              PerryExprManager &_perryExprManager,
       const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-      LoopRangeTy &loopRange);
+      LoopRangeTy &loopRange,
+      const std::set<std::string> &FunctionHooks);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final

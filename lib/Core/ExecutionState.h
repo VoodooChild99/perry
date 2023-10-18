@@ -254,6 +254,7 @@ public:
   uint64_t retVal;
   std::vector<PerryCheckPoint> checkPoints;
   std::map<llvm::MDNode*, ref<Expr>> reg_constraints;
+  std::vector<PerryHook> executed_hooks;
 
   std::map<ref<Expr>, ref<PerryExpr>> fast_conversion_table;
 

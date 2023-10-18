@@ -333,6 +333,11 @@ namespace {
            cl::desc("Link the llvm libc++ library into the bitcode (default=false)"),
            cl::init(false),
            cl::cat(LinkCat));
+  
+  cl::list<std::string>
+  PerryFunctionHooks("perry-function-hook",
+                     cl::desc("Functions to hook"),
+                     cl::cat(MiscCat));
 }
 
 namespace klee {
@@ -1376,6 +1381,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       PerryExprManager &PEM,
                       const std::set<llvm::BasicBlock *> &loopExitingBlocks,
                       LoopRangeTy &loopRange,
+                      const std::set<std::string> &FunctionHooks,
                       bool do_bind);
 
 static int workerPID;
@@ -3195,10 +3201,14 @@ int main(int argc, char **argv) {
   PerryExprManager PEM;
 
   bool do_bind = true;
+  std::set<std::string> perry_func_hooks;
+  for (auto &fh : PerryFunctionHooks) {
+    perry_func_hooks.insert(fh);
+  }
   for (auto TopFunc : TopLevelFunctions) {
     records.clear();
     singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
-              liveTaint, records, PEM, loopExitingBlocks, LoopRanges, do_bind);
+              liveTaint, records, PEM, loopExitingBlocks, LoopRanges, perry_func_hooks, do_bind);
     all_records[TopFunc] = std::move(records);
     do_bind = false;
   }
@@ -3296,12 +3306,13 @@ static void runKlee(std::vector<bool> &replayPath,
                     PerryExprManager &PEM,
                     const std::set<llvm::BasicBlock*> &loopExitingBlocks,
                     LoopRangeTy &loopRange,
+                    const std::set<std::string> &FunctionHooks,
                     bool do_bind)
 {
   KleeHandler *handler = new KleeHandler(0, nullptr);
   Interpreter *interpreter =
     theInterpreter
-      = Interpreter::create(ctx, IOpts, handler, PEM, loopExitingBlocks, loopRange);
+      = Interpreter::create(ctx, IOpts, handler, PEM, loopExitingBlocks, loopRange, FunctionHooks);
   assert(interpreter);
   handler->setInterpreter(interpreter);
 
@@ -3455,6 +3466,7 @@ static void singlerun(std::vector<bool> &replayPath,
                       PerryExprManager &PEM,
                       const std::set<llvm::BasicBlock*> &loopExitingBlocks,
                       LoopRangeTy &loopRange,
+                      const std::set<std::string> &FunctionHooks,
                       bool do_bind)
 {
 
@@ -3494,12 +3506,12 @@ static void singlerun(std::vector<bool> &replayPath,
       }
       close(crpwfd[0]);
       runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts,
-              cwprfd[1], records, PEM, loopExitingBlocks, loopRange, do_bind);
+              cwprfd[1], records, PEM, loopExitingBlocks, loopRange, FunctionHooks, do_bind);
       exit(0);
     }
   } else {
     // no need to fork
     runKlee(replayPath, IOpts, ctx, Opts, kmodule, mainFunctionName, ts, 0,
-            records, PEM, loopExitingBlocks, loopRange, do_bind);
+            records, PEM, loopExitingBlocks, loopRange, FunctionHooks, do_bind);
   }
 }

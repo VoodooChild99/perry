@@ -115,6 +115,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     retVal(state.retVal),
     checkPoints(state.checkPoints),
     reg_constraints(state.reg_constraints),
+    executed_hooks(state.executed_hooks),
     fast_conversion_table(state.fast_conversion_table) {
   for (const auto &cur_mergehandler: openMergeStack)
     cur_mergehandler->addOpenState(this);

@@ -220,6 +220,7 @@ private:
   PerryExprManager &perryExprManager;
   const std::set<llvm::BasicBlock*> &loopExitingBlocks;
   LoopRangeTy &loopRanges;
+  const std::set<std::string> &FunctionHooks;
   // std::vector<PerryTrace> RegAccessTrace;
   // std::vector<std::pair<bool, PerryTrace::Constraints>> finalConditions;
   // std::vector<uint64_t> returnValues;
@@ -507,7 +508,7 @@ public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
       InterpreterHandler *ie, PerryExprManager &_perryExprManager,
       const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-      LoopRangeTy &loopRange);
+      LoopRangeTy &loopRange, const std::set<std::string> &FunctionHooks);
   virtual ~Executor();
 
   const InterpreterHandler& getHandler() {
