@@ -21,6 +21,10 @@ from parse import parse
 
 DEFAULT_TIME_SCALE = 'us'
 
+TIMER_HOOKS = [
+  "HAL_TIM_PeriodElapsedCallback"
+]
+
 class Synthesizer:
   def __init__(self, config_file: str, output_dir: str, all_in_one: bool, debug: bool) -> None:
     self.config_file = config_file
@@ -2597,6 +2601,11 @@ type_init({0});
     for bc in bc_to_include:
       if bc != target_bc:
         addon_cmd.append("--link-llvm-lib={}".format(bc))
+    
+    if target.startswith('TIM'):
+      for hk in TIMER_HOOKS:
+        addon_cmd.append("--perry-function-hook={}".format(hk))
+
     addon_cmd.append(target_bc)
     subprocess.run(self.perry_common_cmd + addon_cmd, stdout=sys.stdout)
   
