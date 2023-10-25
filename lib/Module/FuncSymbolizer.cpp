@@ -1513,7 +1513,6 @@ void FuncSymbolizePass::analyzeDescRxBufferLen(llvm::Module &M) {
   const DataLayout &DL = M.getDataLayout();
   if (RxFrameLen == TxBufLen) {
     // register
-    errs() << "herehere\n";
     std::stack<Function *>candidate_funcs;
     std::set<Function *>analyzed_funcs;
     for (auto &F : TopLevelFunctions) {
