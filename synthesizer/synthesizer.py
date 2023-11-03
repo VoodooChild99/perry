@@ -25,6 +25,11 @@ TIMER_HOOKS = [
   "HAL_TIM_PeriodElapsedCallback"
 ]
 
+UART_HOOKS = [
+  "HAL_UARTEx_RxEventCallback",
+  "UART_EndTransmit_IT"
+]
+
 class DMAInfo:
   def __init__(self) -> None:
     self.src = None
@@ -3013,6 +3018,10 @@ type_init({0});
     
     if target.startswith('TIM'):
       for hk in TIMER_HOOKS:
+        addon_cmd.append("--perry-function-hook={}".format(hk))
+    
+    if target.startswith('USART') or target.startswith('UART'):
+      for hk in UART_HOOKS:
         addon_cmd.append("--perry-function-hook={}".format(hk))
 
     addon_cmd.append(target_bc)
