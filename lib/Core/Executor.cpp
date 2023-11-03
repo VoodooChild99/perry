@@ -1779,6 +1779,7 @@ Executor::enumConstant(ExecutionState &state, ref<Expr> e) {
     newCS = NeExpr::create(e, value);
     cnt += 1;
     if (cnt >= THRESHOLD) {
+      klee_warning("too many constants to enumerate!");
       break;
     }
   }
@@ -4935,10 +4936,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         if (!isa<ConstantExpr>(offset)) {
           uint64_t tmp_offset = 0;
           toConstantClean(state, offset)->toMemory(&tmp_offset);
-          if (isRegOp(state, os, tmp_offset)) {
-            // concretize symbolic register access
-            constRegIdx = enumConstant(state, offset);
-          } 
+          constRegIdx = enumConstant(state, offset);
         }
       }
       if (isWrite) {
@@ -5171,10 +5169,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         if (!isa<ConstantExpr>(offset)) {
           uint64_t tmp_offset = 0;
           toConstantClean(state, offset)->toMemory(&tmp_offset);
-          if (isRegOp(state, os, tmp_offset)) {
-            // concretize symbolic register access
-            constRegIdx = enumConstant(state, offset);
-          } 
+          constRegIdx = enumConstant(state, offset);
         }
       }
       if (isWrite) {
