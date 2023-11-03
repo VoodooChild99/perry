@@ -203,6 +203,126 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
   }
 }
 
+void FuncSymbolizePass::taintPeriph(IRBuilder<> &IRB, Module &M, DIType *ty,
+                                    int &taint, unsigned &offset) {
+  //
+  if (ty->getName().contains_insensitive("reserved")) {
+    return;
+  }
+  switch (ty->getMetadataID()) {
+    case Metadata::DICompositeTypeKind: {
+      DICompositeType *CT = cast<DICompositeType>(ty);
+      switch (CT->getTag()) {
+        case dwarf::DW_TAG_structure_type: {
+          for (auto elm : CT->getElements()) {
+            auto ElmTy = dyn_cast<DIType>(elm);
+            assert(ElmTy != nullptr);
+            taintPeriph(IRB, M, ElmTy, taint, offset);
+          }
+          break;
+        }
+        case dwarf::DW_TAG_union_type: {
+          // select the largest member
+          auto elms = CT->getElements();
+          if (elms.size() == 1) {
+            taintPeriph(IRB, M, dyn_cast<DIType>(elms[0]), taint, offset);
+          } else {
+            unsigned max_index = 0;
+            unsigned index = 0;
+            unsigned max_size = dyn_cast<DIType>(elms[0])->getSizeInBits();
+            for (auto elm : elms) {
+              if (dyn_cast<DIType>(elm)->getSizeInBits() > max_size) {
+                max_size = dyn_cast<DIType>(elm)->getSizeInBits();
+                max_index = index;
+              }
+              ++index;
+            }
+            taintPeriph(IRB, M, dyn_cast<DIType>(elms[max_index]), taint, offset);
+          }
+          break;
+        }
+        case dwarf::DW_TAG_array_type: {
+          if (CT->getElements().size() != 1) {
+            break;
+          }
+          DISubrange *sub_range = dyn_cast<DISubrange>(CT->getElements()[0]);
+          if (!sub_range) {
+            break;
+          }
+          auto count = dyn_cast_or_null<ConstantAsMetadata>(sub_range->getRawCountNode());
+          if (!count) {
+            break;
+          }
+          unsigned num_elem = dyn_cast<ConstantInt>(count->getValue())->getZExtValue();
+          auto ElmTy = CT->getBaseType();
+          unsigned array_size = (CT->getSizeInBits() >> 3);
+          unsigned elm_size = array_size / num_elem;
+          unsigned tmp_offset = offset;
+          for (unsigned i = 0; i < num_elem; ++i) {
+            taintPeriph(IRB, M, ElmTy, taint, tmp_offset);
+            tmp_offset += elm_size;
+          }
+          break;
+        }
+        default: {
+          std::string err_msg;
+          raw_string_ostream OS(err_msg);
+          CT->print(OS);
+          klee_error("unhandled tag: %s", err_msg.c_str());
+        }
+      }
+      break;
+    }
+    case Metadata::DIDerivedTypeKind: {
+      DIDerivedType *DT = cast<DIDerivedType>(ty);
+      switch (DT->getTag()) {
+        case dwarf::DW_TAG_member: {
+          unsigned tmp_offset = offset;
+          tmp_offset += (DT->getOffsetInBits()  >> 3);
+          taintPeriph(IRB, M, DT->getBaseType(), taint, tmp_offset);
+          break;
+        }
+        case dwarf::DW_TAG_const_type:
+        case dwarf::DW_TAG_volatile_type:
+        case dwarf::DW_TAG_typedef: {
+          taintPeriph(IRB, M, DT->getBaseType(), taint, offset);
+          break;
+        }
+        default: {
+          std::string err_msg;
+          raw_string_ostream OS(err_msg);
+          DT->print(OS);
+          klee_error("unhandled tag: %s", err_msg.c_str());
+        }
+      }
+      break;
+    }
+    case Metadata::DIBasicTypeKind: {
+      DIBasicType *BT = cast<DIBasicType>(ty);
+      unsigned elm_size = (BT->getSizeInBits() >> 3);
+      if (elm_size == 1 || elm_size == 2 || elm_size == 4 || elm_size == 8) {
+        Value *TT = IRB.getInt32(taint * 0x01000000);
+        ++taint;
+        if (taint > 0xff) {
+          klee_error("Register persistent taint too big");
+        }
+        Value *Size = IRB.getInt32(elm_size);
+        Value *Offset = IRB.CreateIntToPtr(
+          IRB.getInt32(TargetStructLoc + offset),
+          IRB.getInt8PtrTy());
+        IRB.CreateCall(SetPersistTaintFC, {TT, Offset, Size});
+        IRB.CreateCall(SetTaintFC, {TT, Offset, Size});
+      }
+      break;
+    }
+    default: {
+      std::string err_msg;
+      raw_string_ostream OS(err_msg);
+      ty->print(OS);
+      klee_error("unhandled metadata: %s", err_msg.c_str());
+    }
+  }
+}
 
 void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
   unsigned num = PeriphAddrList.size();
@@ -277,78 +397,8 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
     }
     // taint it
     int Taint = 0;
-    for (auto EI : DICT->getElements()) {
-      auto EDIT = dyn_cast<DIType>(EI);
-      assert(EDIT != nullptr);
-      uint64_t bits = EDIT->getSizeInBits();
-      Type *CT = nullptr;
-      if (bits == 32) {
-        CT = IRB.getInt32Ty();
-      } else if (bits == 64) {
-        CT = IRB.getInt64Ty();
-      } else if (bits == 16) {
-        CT = IRB.getInt16Ty();
-      } else if (bits == 8) {
-        CT = IRB.getInt8Ty();
-      } else {
-        if (EDIT->getName().contains_insensitive("reserved")) {
-          continue;
-        }
-        // array?
-        if (isa<DIDerivedType>(EDIT)) {
-          DIDerivedType *DIDT = cast<DIDerivedType>(EDIT);
-          if (DIDT->getBaseType()) {
-            if (isa<DICompositeType>(DIDT->getBaseType())) {
-              auto MayBeArrayTy = cast<DICompositeType>(DIDT->getBaseType());
-              if (MayBeArrayTy->getTag() == dwarf::DW_TAG_array_type) {
-                if (MayBeArrayTy->getElements().size() == 1 &&
-                    MayBeArrayTy->getElements()[0]->getTag() == dwarf::DW_TAG_subrange_type) {
-                  DISubrange *DIS = cast<DISubrange>(MayBeArrayTy->getElements()[0]);
-                  auto CB = DIS->getRawCountNode();
-                  if (CB && isa<ConstantAsMetadata>(CB)) {
-                    auto *MD = cast<ConstantAsMetadata>(CB);
-                    auto *CI = dyn_cast<ConstantInt>(MD->getValue());
-                    unsigned num_elem = CI->getZExtValue();
-                    unsigned array_size = MayBeArrayTy->getSizeInBits();
-                    unsigned elem_size = array_size / num_elem;
-                    if (elem_size == 32) {
-                      CT = IRB.getInt32Ty();
-                    } else if (elem_size == 16) {
-                      CT = IRB.getInt16Ty();
-                    } else if (elem_size == 8) {
-                      CT = IRB.getInt8Ty();
-                    } else if (elem_size == 64) {
-                      CT = IRB.getInt64Ty();
-                    }
-                    if (CT) {
-                      CT = ArrayType::get(CT, num_elem);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        if (!CT) {
-          std::string err_msg;
-          raw_string_ostream OS(err_msg);
-          EDIT->print(OS);
-          klee_error("unsupported type: %s", err_msg.c_str());
-        }
-      }
-      Value *TT = IRB.getInt32(Taint * 0x01000000);
-      ++Taint;
-      if (Taint > 0xff) {
-        klee_error("Register persistent taint too big");
-      }
-      Value *Size = IRB.getInt32(DL->getTypeAllocSize(CT));
-      Value *Offset = IRB.CreateIntToPtr(
-        IRB.getInt32(TargetStructLoc + EDIT->getOffsetInBits() / 8),
-        IRB.getInt8PtrTy());
-      IRB.CreateCall(SetPersistTaintFC, {TT, Offset, Size});
-      IRB.CreateCall(SetTaintFC, {TT, Offset, Size});
-    }
-  }
+    unsigned offset = 0;
+    taintPeriph(IRB, M, DICT, Taint, offset);
 }
 
 bool FuncSymbolizePass::

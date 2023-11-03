@@ -313,6 +313,8 @@ private:
   void analyzeTimerPeriodReg(llvm::Module &M);
   void symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M);
   void createPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M);
+  void taintPeriph(llvm::IRBuilder<> &IRB, llvm::Module &M, llvm::DIType *ty,
+                   int &taint, unsigned &offset);
   void createParamsFor(llvm::Function *TargetF, llvm::IRBuilder<> &IRB,
                        std::vector<ParamCell*> &results);
   void symbolizeParams(llvm::IRBuilder<> &IRB, std::vector<ParamCell*> &results);
