@@ -299,8 +299,13 @@ private:
   Field DescBuf;
   llvm::BasicBlock *rx_set_length_block = nullptr;
   bool TargetIsTimer = false;
+  unsigned TargetPeriphStructSize = 0;
+  bool TargetIsDMA = false;
+  llvm::Function *ParamF = nullptr;
+  llvm::FunctionCallee DMAInitFC;
 
   bool isEthernetPeriph(llvm::StringRef name);
+  bool isDMAPeriph(llvm::StringRef name);
   void analyzeDescRegs(llvm::Module &M);
   void analyzeDescTxBufferLen(llvm::Module &M);
   void analyzeDescRxBufferLen(llvm::Module &M);
@@ -334,6 +339,8 @@ private:
   void applyDataHeuristic(llvm::IRBuilder<> &IRB,
                           std::vector<ParamCell*> &results,
                           llvm::Function *TargetF);
+  llvm::Value* createDMAChannel(llvm::IRBuilder<> &IRB, ParamCell *PC,
+                                const void * Cdef);
 };
 
 } // namespace klee

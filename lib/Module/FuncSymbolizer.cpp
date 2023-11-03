@@ -4,6 +4,7 @@
 #include "klee/Perry/PerryExpr.h"
 #include "klee/Perry/PerryEthInfo.h"
 #include "klee/Perry/PerryTimerInfo.h"
+#include "klee/Perry/PerryDMAInfo.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
@@ -56,6 +57,110 @@ namespace {
     cl::desc("A list of sizes of other peripherals"),
     cl::cat(MiscCat)
   );
+}
+
+static std::vector<std::string> null_ptr_structs = {
+  "edma_tcd"
+};
+
+static inline bool shouldStructPtrBeNull(llvm::StringRef name) {
+  for (auto &n : null_ptr_structs) {
+    if (name.contains(n)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+enum DataType {
+  PARAMETER,
+  STRUCT,
+};
+
+static const std::set<std::string> dma_keywords = {
+  "DMA",
+};
+
+bool FuncSymbolizePass::isDMAPeriph(llvm::StringRef name) {
+  for (auto &k : dma_keywords) {
+    if (name.startswith_insensitive(k)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+struct DMADataDesc {
+  DataType ty;
+  std::string sname;
+  int data_idx;
+};
+
+static const std::vector<DMADataDesc> dma_config_src_data = {
+  DMADataDesc {
+    .ty = STRUCT,
+    .sname = "edma_transfer_config",
+    .data_idx = 0,
+  },
+  DMADataDesc {
+    .ty = PARAMETER,
+    .sname = "HAL_DMA_Start",
+    .data_idx = 1,
+  },
+};
+
+static const std::vector<DMADataDesc> dma_config_dst_data = {
+  DMADataDesc {
+    .ty = STRUCT,
+    .sname = "edma_transfer_config",
+    .data_idx = 1,
+  },
+  DMADataDesc {
+    .ty = PARAMETER,
+    .sname = "HAL_DMA_Start",
+    .data_idx = 2,
+  },
+};
+
+static const std::vector<DMADataDesc> dma_config_count_data = {
+  DMADataDesc {
+    .ty = STRUCT,
+    .sname = "edma_transfer_config",
+    .data_idx = 7,
+  },
+  DMADataDesc {
+    .ty = PARAMETER,
+    .sname = "HAL_DMA_Start",
+    .data_idx = 3,
+  },
+};
+
+static const std::vector<std::string> dma_init_func = {
+  "EDMA_Init",
+  "HAL_DMA_Init",
+};
+
+struct DMAChannelDef {
+  std::string sname;
+  int start_padding;
+  int end_padding;
+};
+
+static const std::vector<DMAChannelDef> dma_channel_struct = {
+  DMAChannelDef {
+    .sname = "DMA_Channel_TypeDef",
+    .start_padding = 0,
+    .end_padding = 4,
+  },
+};
+
+static inline const DMAChannelDef* isDMAChannelTy(llvm::StringRef name) {
+  for (auto &CS : dma_channel_struct) {
+    if (name.contains(CS.sname)) {
+      return &CS;
+    }
+  }
+  return nullptr;
 }
 
 FuncSymbolizePass::ParamCell::~ParamCell() {
@@ -383,6 +488,7 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
     if (!DICT) {
       klee_error("Cannot locate struct");
     }
+    TargetPeriphStructSize = DICT->getSizeInBits() / 8;
 
     if (!target_periph_created) {
       Value *pLoc = IRB.getInt32(TargetStructLoc);
@@ -398,6 +504,116 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
     int Taint = 0;
     unsigned offset = 0;
     taintPeriph(IRB, M, DICT, Taint, offset);
+    if (TargetIsDMA) {
+      // taint channels, if any
+      unsigned sz = (DICT->getSizeInBits() >> 3);
+      DICT = nullptr;
+      const DMAChannelDef *DCD = nullptr;
+      for (auto &CS : dma_channel_struct) {
+        for (auto DIT : DIF.types()) {
+          if (DIT->getMetadataID() == Metadata::DIDerivedTypeKind) {
+            auto DT = cast<DIDerivedType>(DIT);
+            auto BT = DT->getBaseType();
+            if (!BT) {
+              continue;
+            }
+            if (BT->getMetadataID() == Metadata::DICompositeTypeKind) {
+              if (DT->getName().contains(CS.sname)) {
+                DICT = cast<DICompositeType>(BT);
+                DCD = &CS;
+              }
+            }
+          } else if (DIT->getMetadataID() == Metadata::DICompositeTypeKind) {
+            if (DIT->getName().contains(CS.sname)) {
+              DICT = cast<DICompositeType>(DIT);
+              DCD = &CS;
+            }
+          }
+          if (DICT) {
+            break;
+          }
+        }
+        if (DICT) {
+          break;
+        }
+      }
+      if (!DICT) {
+        klee_error("Cannot locate struct");
+      }
+      offset = sz;
+      sz = (DICT->getSizeInBits() >> 3);
+      while (1) {
+        offset += DCD->start_padding;
+        if (offset >= TargetStructSize) {
+          break;
+        }
+        taintPeriph(IRB, M, DICT, Taint, offset);
+        offset += sz;
+        offset += DCD->end_padding;
+      }
+    }
+  }
+}
+
+Value* FuncSymbolizePass::
+createDMAChannel(IRBuilder<> &IRB, ParamCell *PC, const void *Cdef) {
+  if (!TargetIsDMA) {
+    return ConstantPointerNull::get(PointerType::get(PC->ParamType, 0));
+  }
+  const DMAChannelDef *Channel = (const DMAChannelDef*)Cdef;
+  std::vector<Value*> channel_bases;
+  unsigned cur_size = TargetPeriphStructSize + Channel->start_padding;
+  unsigned channel_size = DL->getTypeAllocSize(PC->ParamType);
+  while (true) {
+    cur_size += channel_size;
+    if (cur_size <= TargetStructSize) {
+      channel_bases.push_back(
+        IRB.CreateIntToPtr(IRB.getInt32(TargetStructLoc + cur_size - channel_size),
+                           PC->ParamType->getPointerTo()));
+      cur_size += (Channel->end_padding + Channel->start_padding);
+    } else {
+      break;
+    }
+  }
+  if (channel_bases.empty()) {
+    return ConstantPointerNull::get(PointerType::get(PC->ParamType, 0));
+  }
+  if (channel_bases.size() == 1) {
+    return channel_bases[0];
+  }  
+  // use a selector to select the channel
+  Value *sel = IRB.CreateAlloca(IRB.getInt32Ty());
+  std::string SymbolName = "sel";
+  symbolizeValue(IRB, sel, SymbolName,
+                 DL->getTypeAllocSize(IRB.getInt32Ty()));
+  // choose a value
+  sel = IRB.CreateLoad(IRB.getInt32Ty(), sel);
+  sel = IRB.CreateURem(sel, IRB.getInt32(channel_bases.size()));
+  auto DummyF = IRB.GetInsertBlock()->getParent();
+  auto entryBB = IRB.GetInsertBlock();
+  auto DefaultBB = BasicBlock::Create(IRB.getContext(),
+                                      "default_channel_branch", DummyF);
+  auto CSI = IRB.CreateSwitch(sel, DefaultBB, channel_bases.size());
+  unsigned pf_idx = 0;
+  std::vector<std::pair<Value*, BasicBlock *>> bb_values;
+  for (auto cb: channel_bases) {
+    std::string BranchName = "branch_channel_" + std::to_string(pf_idx);
+    auto BranchBB = BasicBlock::Create(IRB.getContext(), BranchName,
+                                       DummyF, DefaultBB);
+    CSI->addCase(IRB.getInt32(pf_idx), BranchBB);
+    ++pf_idx;
+    IRB.SetInsertPoint(BranchBB);
+    IRB.CreateBr(DefaultBB);
+    bb_values.emplace_back(std::make_pair(cb, BranchBB));
+  }
+  IRB.SetInsertPoint(DefaultBB);
+  PHINode *phi = IRB.CreatePHI(PC->ParamType->getPointerTo(), channel_bases.size());
+  for (auto &bv : bb_values) {
+    phi->addIncoming(bv.first, bv.second);
+  }
+  phi->addIncoming(
+    ConstantPointerNull::get(PointerType::get(PC->ParamType, 0)), entryBB);
+  return phi;
 }
 
 bool FuncSymbolizePass::
@@ -405,6 +621,7 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
   std::stack<ParamCell*> WorkStack;
   WorkStack.push(root);
   bool ret = true;
+  const DMAChannelDef *Cdef = nullptr;
 
   while (!WorkStack.empty()) {
     ParamCell *PC = WorkStack.top();
@@ -414,7 +631,17 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
       case Type::TypeID::StructTyID: {
         if (!(PC->parent && PC->depth == 0)) {
           if (!PC->ParamType->getStructName().equals(PeripheralPlaceholder)) {
-            PC->val = IRB.CreateAlloca(PC->ParamType);
+            if (PC->depth == 1 &&
+                shouldStructPtrBeNull(PC->ParamType->getStructName())) {
+              PC->val = ConstantPointerNull::get(PointerType::get(PC->ParamType, 0));
+              break;
+            } else if (PC->depth == 1 &&
+                       (Cdef = isDMAChannelTy(PC->ParamType->getStructName())))  {
+              PC->val = createDMAChannel(IRB, PC, Cdef);
+              break;
+            } else {
+              PC->val = IRB.CreateAlloca(PC->ParamType);
+            }
           } else {
             PC->val = IRB.CreateIntToPtr(IRB.getInt32(TargetStructLoc),
                                          PC->ParamType->getPointerTo());
@@ -532,7 +759,9 @@ void FuncSymbolizePass::symbolizeFrom(IRBuilder<> &IRB, ParamCell *root) {
     }
     if (PC->val) {
       if (PC->ParamType->isStructTy() &&
-          PC->ParamType->getStructName().equals(PeripheralPlaceholder)) {
+          (PC->ParamType->getStructName().equals(PeripheralPlaceholder) ||
+           shouldStructPtrBeNull(PC->ParamType->getStructName()) ||
+           isDMAChannelTy(PC->ParamType->getStructName()))) {
         continue;
       }
       std::string SymbolName = "s" + std::to_string(symidx);
@@ -550,6 +779,101 @@ void FuncSymbolizePass::symbolizeFrom(IRBuilder<> &IRB, ParamCell *root) {
       }
       Value *valSize = IRB.getInt32(allocSize);
       IRB.CreateCall(MakeSymbolicFC, {addr, valSize, ptrVarName});
+
+      if (TargetIsDMA) {
+        if (PC->depth == 0 && !PC->parent) {
+          // param
+          for (auto &conf : dma_config_src_data) {
+            if (conf.ty == STRUCT) {
+              continue;
+            }
+            if (conf.data_idx != PC->idx) {
+              continue;
+            }
+            if (!ParamF->getName().equals(conf.sname)) {
+              continue;
+            }
+            perry_dma_info->src_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, 0)));
+          }
+
+          for (auto &conf : dma_config_dst_data) {
+            if (conf.ty == STRUCT) {
+              continue;
+            }
+            if (conf.data_idx != PC->idx) {
+              continue;
+            }
+            if (!ParamF->getName().equals(conf.sname)) {
+              continue;
+            }
+            perry_dma_info->dst_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, 0)));
+          }
+
+          for (auto &conf : dma_config_count_data) {
+            if (conf.ty == STRUCT) {
+              continue;
+            }
+            if (conf.data_idx != PC->idx) {
+              continue;
+            }
+            if (!ParamF->getName().equals(conf.sname)) {
+              continue;
+            }
+            perry_dma_info->cnt_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, 0)));
+          }
+        }
+
+        if (PC->ParamType->isStructTy()) {
+          StringRef sname = PC->ParamType->getStructName();
+          for (auto &conf : dma_config_src_data) {
+            if (conf.ty == PARAMETER) {
+              continue;
+            }
+            if (!sname.contains(conf.sname)) {
+              continue;
+            }
+            auto Sty = cast<StructType>(PC->ParamType);
+            auto mem_offset = DL->getStructLayout(Sty)->getElementOffset(conf.data_idx);
+            perry_dma_info->src_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, mem_offset)));
+          }
+
+          for (auto &conf : dma_config_dst_data) {
+            if (conf.ty == PARAMETER) {
+              continue;
+            }
+            if (!sname.contains(conf.sname)) {
+              continue;
+            }
+            auto Sty = cast<StructType>(PC->ParamType);
+            auto mem_offset = DL->getStructLayout(Sty)->getElementOffset(conf.data_idx);
+            perry_dma_info->dst_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, mem_offset)));
+          }
+
+          for (auto &conf : dma_config_count_data) {
+            if (conf.ty == PARAMETER) {
+              continue;
+            }
+            if (!sname.contains(conf.sname)) {
+              continue;
+            }
+            auto Sty = cast<StructType>(PC->ParamType);
+            auto mem_offset = DL->getStructLayout(Sty)->getElementOffset(conf.data_idx);
+            perry_dma_info->cnt_symbol.insert(
+              std::make_pair(ParamF->getName().str(),
+                            PerryDMAInfo::SymbolInfo(SymbolName, mem_offset)));
+          }
+        }
+      }
     }
     std::size_t NumChild = PC->child.size();
     for (std::size_t i = NumChild; i > 0; --i) {
@@ -942,6 +1266,70 @@ void FuncSymbolizePass::callTarget(Function *TargetF, IRBuilder<> &IRB,
         --tmp;
       }
       RealParams.push_back(FinalValue);
+    }
+  }
+  // if the target is a DMA peripheral, call the initialization function first
+  if (TargetIsDMA && DMAInitFC.getCallee() && TargetF != DMAInitFC.getCallee()) {
+    // analyze the params first
+    std::vector<Value *> dma_init_params;
+    unsigned idx = 0;
+    bool share_same_param = false;
+    for (auto ty : DMAInitFC.getFunctionType()->params()) {
+      for (unsigned pid = 0; pid < TargetF->getFunctionType()->getNumParams(); ++pid) {
+        if (ty == TargetF->getFunctionType()->getParamType(pid)) {
+          share_same_param = true;
+          break;
+        }
+      }
+      if (share_same_param) {
+        break;
+      }
+    }
+    if (share_same_param) {
+      for (auto ty : DMAInitFC.getFunctionType()->params()) {
+        bool found_same_type = false;
+        for (unsigned pid = 0; pid < TargetF->getFunctionType()->getNumParams(); ++pid) {
+          if (ty == TargetF->getFunctionType()->getParamType(pid)) {
+            dma_init_params.push_back(RealParams[pid]);
+            found_same_type = true;
+            break;
+          }
+        }
+        if (!found_same_type) {
+          // we must create it now
+          ParamCell *PC = new ParamCell();
+          PC->ParamType = ty;
+          PC->idx = idx;
+          if (createCellsFrom(IRB, PC)) {
+            ParamF = cast<Function>(DMAInitFC.getCallee());
+            symbolizeFrom(IRB, PC);
+            fillCellInner(IRB, PC);
+            if (!PC->val) {
+              assert(PC->ParamType->isFunctionTy() && PC->depth == 1);
+              dma_init_params.push_back(
+                ConstantPointerNull::get(PC->ParamType->getPointerTo()));
+            } else if (PC->depth == 0) {
+              dma_init_params.push_back(IRB.CreateLoad(PC->ParamType, PC->val));
+            } else {
+              int tmp = PC->depth - 1;
+              Value *FinalValue = PC->val;
+              while (tmp > 0) {
+                Value *PtrToValue = IRB.CreateAlloca(FinalValue->getType());
+                IRB.CreateStore(FinalValue, PtrToValue);
+                FinalValue = PtrToValue;
+                --tmp;
+              }
+              dma_init_params.push_back(FinalValue);
+            }
+          } else {
+            assert(PC->ParamType->isFunctionTy() && PC->depth == 1);
+            dma_init_params.push_back(
+              ConstantPointerNull::get(PC->ParamType->getPointerTo()));
+          }
+        }
+        ++idx;
+      }
+      IRB.CreateCall(DMAInitFC, dma_init_params);
     }
   }
   // handle return value
@@ -2159,11 +2547,6 @@ static const std::set<std::string> tim_keywords = {
   "TIM", "LPTIM", "FTM", "LPTMR", "PIT"
 };
 
-enum DataType {
-  PARAMETER,
-  STRUCT,
-};
-
 struct TimFuncDesc {
   std::string fname;
   DataType ty;
@@ -2357,6 +2740,7 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
 
   TargetIsETH = isEthernetPeriph(TargetStruct);
   TargetIsTimer = isTimerPeriph(TargetStruct);
+  TargetIsDMA = isDMAPeriph(TargetStruct);
 
   PeripheralPlaceholder = "struct." + TargetStruct;
 
@@ -2400,6 +2784,17 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
                                      IRBM.getVoidTy(),
                                      IRBM.getInt32Ty(),
                                      IRBM.getInt32Ty());
+  for (auto &DF : dma_init_func) {
+    Function *F = M.getFunction(DF);
+    if (!F) {
+      continue;
+    }
+    if (F->isDeclaration() || F->isDebugInfoForProfiling()) {
+      continue;
+    }
+    DMAInitFC = FunctionCallee(F->getFunctionType(), F);
+    break;
+  }
 
   bool changed = false;
   for (auto TFName : TopLevelFunctions) {
@@ -2452,12 +2847,15 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     // process results
     // PeriphSymbolName.clear();
     // make all allocated memory region in params symbolic
+    ParamF = TargetF;
     symbolizeParams(IRBF, results);
     FunctionToSymbolName->insert(std::make_pair(TFName, "s0"));
     applyDataHeuristic(IRBF, results, TargetF);
     // taint buffers
-    if (!TargetIsETH) {
-      setTaint(IRBF, results);
+    if (!TargetIsETH && !TargetIsTimer && !TargetIsDMA) {
+      if (!StringRef(TFName).startswith("LL_")) {
+        setTaint(IRBF, results);
+      }
     }
     // fill in params
     fillParamas(IRBF, results);
@@ -2466,8 +2864,10 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     // call the target function & process the return value
     callTarget(TargetF, IRBF, results);
     // collect taint after symbolic execution
-    if (!TargetIsETH) {
-      collectTaint(IRBF);
+    if (!TargetIsETH && !TargetIsTimer && !TargetIsDMA) {
+      if (!StringRef(TFName).startswith("LL_")) {
+        collectTaint(IRBF);
+      }
     }
     collectRetVal(IRBF, TFName);
     GuessedBuffers.clear();

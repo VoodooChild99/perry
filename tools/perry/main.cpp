@@ -32,6 +32,7 @@
 #include "klee/Perry/PerryLoop.h"
 #include "klee/Perry/PerryEthInfo.h"
 #include "klee/Perry/PerryTimerInfo.h"
+#include "klee/Perry/PerryDMAInfo.h"
 #include "klee/Perry/PerryCustomHook.h"
 
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -74,6 +75,7 @@
 #include <iterator>
 #include <sstream>
 #include <regex>
+#include <tuple>
 
 using namespace llvm;
 using namespace klee;
@@ -347,6 +349,7 @@ extern cl::opt<std::string> MaxTime;
 class ExecutionState;
 PerryEthInfo *perry_eth_info = nullptr;
 PerryTimerInfo *perry_timer_info = nullptr;
+PerryDMAInfo *perry_dma_info = nullptr;
 }
 
 /***/
@@ -1414,6 +1417,29 @@ containsReadTo(const std::string &SymName, const ref<PerryExpr> &PE) {
   return false;
 }
 
+static bool
+containsReadTo(const std::string &SymName, const ref<PerryExpr> &PE, int idx) {
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (RE->Name == SymName) {
+        PerryConstantExpr *PCE = dyn_cast<PerryConstantExpr>(RE->idx);
+        if (PCE && PCE->getAPValue().getZExtValue() == (unsigned)idx) {
+          return true;
+        }
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return false;
+}
+
 static void
 collectContainedSym(const ref<PerryExpr> &PE, std::set<SymRead> &S,
                     const std::string &blacklist="") {
@@ -1491,6 +1517,31 @@ static bool containsReadRelatedStrict(const std::set<SymRead> &SR,
     }
   }
   return true;
+}
+
+static bool containsReadRelatedRelaxed(const std::set<SymRead> &SR,
+                                       const ref<PerryExpr> &PE)
+{
+  std::deque<ref<PerryExpr>> WL;
+  WL.push_back(PE);
+  while (!WL.empty()) {
+    auto E = WL.front();
+    WL.pop_front();
+    if (auto RE = dyn_cast<PerryReadExpr>(E)) {
+      if (auto CE = dyn_cast<PerryConstantExpr>(RE->idx)) {
+        if (SR.end() !=
+            SR.find(SymRead(RE->Name, CE->getAPValue().getZExtValue(), RE->width)))
+        {
+          return true;
+        }
+      }
+    }
+    unsigned numKids = E->getNumKids();
+    for (unsigned i = 0; i < numKids; ++i) {
+      WL.push_back(E->getKid(i));
+    }
+  }
+  return false;
 }
 
 static bool hasSameConstraints(std::vector<ref<PerryExpr>> &a,
@@ -2171,6 +2222,43 @@ static const std::set<std::string> timer_irq_funcs = {
   "HAL_TIM_PeriodElapsedCallback"
 };
 
+static const std::vector<std::string> dma_enable_funcs = {
+  "LL_DMA_EnableChannel"
+};
+
+static const std::vector<std::string> dma_disable_funcs = {
+  "LL_DMA_DisableChannel"
+};
+
+static const std::vector<std::string> dma_rx_enable_funcs = {
+  "LL_USART_EnableDMAReq_RX",
+  "LL_I2C_EnableDMAReq_RX",
+  "LL_SPI_EnableDMAReq_RX",
+};
+
+static const std::vector<std::string> dma_rx_disable_funcs = {
+  "LL_USART_DisableDMAReq_RX",
+  "LL_I2C_DisableDMAReq_RX",
+  "LL_SPI_DisableDMAReq_RX",
+};
+
+static const std::vector<std::string> dma_tx_enable_funcs = {
+  "LL_USART_EnableDMAReq_TX",
+  "LL_I2C_EnableDMAReq_TX",
+  "LL_SPI_EnableDMAReq_TX",
+};
+
+static const std::vector<std::string> dma_tx_disable_funcs = {
+  "LL_USART_DisableDMAReq_TX",
+  "LL_I2C_DisableDMAReq_TX",
+  "LL_SPI_DisableDMAReq_TX",
+};
+
+static const std::set<std::string> uart_irq_hooks = {
+  "HAL_UARTEx_RxEventCallback",
+  "UART_EndTransmit_IT"
+};
+
 static void
 postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::string> &FunctionToSymbolName,
@@ -2202,7 +2290,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   PerryZ3Builder z3builder;
   z3::expr_vector timer_enable_conds(z3builder.getContext());
   z3::expr_vector timer_disable_conds(z3builder.getContext());
+  z3::expr_vector dma_enable_conds(z3builder.getContext());
+  z3::expr_vector dma_disable_conds(z3builder.getContext());
+  z3::expr_vector dma_rx_enable_conds(z3builder.getContext());
+  z3::expr_vector dma_rx_disable_conds(z3builder.getContext());
+  z3::expr_vector dma_tx_enable_conds(z3builder.getContext());
+  z3::expr_vector dma_tx_disable_conds(z3builder.getContext());
   std::vector<std::vector<ref<PerryExpr>>> timer_irq_conds;
+  std::vector<std::vector<std::vector<ref<PerryExpr>>>> dma_xfer_cplt_irq_conds(32);
+  std::map<std::tuple<unsigned, unsigned, unsigned>, z3::expr> final_src_dst;
 
   for (auto TopFunc : TopLevelFunctions) {
     assert(FunctionToSymbolName.find(TopFunc) != FunctionToSymbolName.end());
@@ -2215,7 +2311,273 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     }
     unique_constraints_final_per_function.push_back(std::vector<std::vector<ref<PerryExpr>>>());
 
+    if (!perry_dma_info->src_symbol.empty() &&
+        perry_dma_info->src_symbol.find(TopFunc) != perry_dma_info->src_symbol.end()) {
+      for (auto &rec : Record) {
+        auto &trace = rec.trace;
+        auto &reg_accesses = rec.register_accesses;
+        for (auto &PTI : trace) {
+          auto &cur_access = reg_accesses[PTI.reg_access_idx];
+          if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+            continue;
+          }
+          if (containsReadTo(perry_dma_info->src_symbol[TopFunc].sym,
+                             cur_access->ExprInReg,
+                             perry_dma_info->src_symbol[TopFunc].idx)) {
+            perry_dma_info->src_reg_idx.insert(cur_access->offset);
+          }
+        }
+      }
+    }
+
+    if (!perry_dma_info->dst_symbol.empty() &&
+        perry_dma_info->dst_symbol.find(TopFunc) != perry_dma_info->dst_symbol.end()) {
+      for (auto &rec : Record) {
+        auto &trace = rec.trace;
+        auto &reg_accesses = rec.register_accesses;
+        for (auto &PTI : trace) {
+          auto &cur_access = reg_accesses[PTI.reg_access_idx];
+          if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+            continue;
+          }
+          if (containsReadTo(perry_dma_info->dst_symbol[TopFunc].sym,
+                             cur_access->ExprInReg,
+                             perry_dma_info->dst_symbol[TopFunc].idx)) {
+            perry_dma_info->dst_reg_idx.insert(cur_access->offset);
+          }
+        }
+      }
+    }
+
+    if (!perry_dma_info->cnt_symbol.empty() &&
+        perry_dma_info->cnt_symbol.find(TopFunc) != perry_dma_info->cnt_symbol.end()) {
+      for (auto &rec : Record) {
+        auto &trace = rec.trace;
+        auto &reg_accesses = rec.register_accesses;
+        for (auto &PTI : trace) {
+          auto &cur_access = reg_accesses[PTI.reg_access_idx];
+          if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+            continue;
+          }
+          if (containsReadTo(perry_dma_info->cnt_symbol[TopFunc].sym,
+                             cur_access->ExprInReg,
+                             perry_dma_info->cnt_symbol[TopFunc].idx)) {
+            perry_dma_info->cnt_reg_idx.insert(cur_access->offset);
+          }
+        }
+      }
+    }
+
+    if (isIRQ) {
+      for (auto &rec : Record) {
+        for (auto &hk : rec.triggerred_hooks) {
+          if (!StringRef(hk.hook_name).startswith(PERRY_DMA_XFER_CPLT_HOOK)) {
+            continue;
+          }
+          unsigned cidx = 0;
+          if (hk.hook_name.size() > strlen(PERRY_DMA_XFER_CPLT_HOOK)) {
+            cidx = std::stoul(hk.hook_name.substr(strlen(PERRY_DMA_XFER_CPLT_HOOK)));
+          }
+          auto &cs_cur = hk.constraints;
+          std::vector<ref<PerryExpr>> DMAXferCpltIRQConstraint;
+          for (auto &CS : cs_cur) {
+            if (containsReadTo(SymName, CS)) {
+              DMAXferCpltIRQConstraint.push_back(CS);
+            }
+          }
+          isUniqueConstraints(dma_xfer_cplt_irq_conds[cidx], DMAXferCpltIRQConstraint);
+        }
+      }
+    }
+
     bool should_continue = false;
+
+    for (auto &def : dma_enable_funcs) {
+      if (def == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_enable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &ddf : dma_disable_funcs) {
+      if (ddf == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_disable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &dre : dma_rx_enable_funcs) {
+      if (dre == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_rx_enable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &ddf : dma_rx_disable_funcs) {
+      if (ddf == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_rx_disable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &ddf : dma_tx_enable_funcs) {
+      if (ddf == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_tx_enable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &ddf : dma_tx_disable_funcs) {
+      if (ddf == TopFunc) {
+        for (auto &rec : Record) {
+          auto &trace = rec.trace;
+          auto &reg_accesses = rec.register_accesses;
+          for (auto &PTI : trace) {
+            auto &cur_access = reg_accesses[PTI.reg_access_idx];
+            if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+              continue;
+            }
+            z3::expr_vector bit_level_expr(z3builder.getContext());
+            z3::expr_vector empty_blacklist(z3builder.getContext());
+            z3builder.getBitLevelExpr(cur_access->ExprInReg, bit_level_expr);
+            SymRead sr(cur_access->name, cur_access->offset, cur_access->width);
+            auto bit_constraints
+              = z3builder.inferBitLevelConstraintWithBlacklist(
+                  z3builder.getContext().bool_val(true), sr,
+                  empty_blacklist, bit_level_expr);
+            bit_constraints = bit_constraints.simplify();
+            dma_tx_disable_conds.push_back(bit_constraints);
+          }
+        }
+        should_continue = true;
+        break;
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+    
     for (auto &tef : timer_enable_funcs) {
       if (tef == TopFunc) {
         for (auto &rec : Record) {
@@ -2281,23 +2643,38 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     if (isIRQ && !PerryFunctionHooks.empty()) {
       for (auto &rec : Record) {
         for (auto &hk : rec.triggerred_hooks) {
-          if (timer_irq_funcs.find(hk.hook_name) == timer_irq_funcs.end()) {
-            continue;
-          }
-          auto &cs_cur = hk.constraints;
-          std::vector<ref<PerryExpr>> TimerIRQConstraint;
-          for (auto &CS : cs_cur) {
-            if (containsReadTo(SymName, CS)) {
-              TimerIRQConstraint.push_back(CS);
+          if (timer_irq_funcs.find(hk.hook_name) != timer_irq_funcs.end()) {
+            auto &cs_cur = hk.constraints;
+            std::vector<ref<PerryExpr>> TimerIRQConstraint;
+            for (auto &CS : cs_cur) {
+              if (containsReadTo(SymName, CS)) {
+                TimerIRQConstraint.push_back(CS);
+              }
             }
+            isUniqueConstraints(timer_irq_conds, TimerIRQConstraint);
+            should_continue = true;
           }
-          isUniqueConstraints(timer_irq_conds, TimerIRQConstraint);
-          should_continue = true;
+
+          if (uart_irq_hooks.find(hk.hook_name) != uart_irq_hooks.end()) {
+            auto &cs_cur = hk.constraints;
+            std::vector<ref<PerryExpr>> UartIRQConstraints;
+            for (auto &CS : cs_cur) {
+              if (containsReadTo(SymName, CS)) {
+                UartIRQConstraints.push_back(CS);
+              }
+            }
+            isUniqueConstraints(unique_constraints_irq, UartIRQConstraints);
+            should_continue = false;
+          }
         }
       }
     }
 
     if (should_continue) {
+      continue;
+    }
+
+    if (!byReg.empty() && StringRef(TopFunc).startswith("LL_")) {
       continue;
     }
 
@@ -2523,6 +2900,201 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             }
           }
         }
+      }
+    }
+  }
+
+  if (!perry_dma_info->src_reg_idx.empty()) {
+    // try resolve direction if src and dst registers overlap
+    bool overlap = false;
+    for (auto sr : perry_dma_info->src_reg_idx) {
+      if (perry_dma_info->dst_reg_idx.find(sr) == perry_dma_info->dst_reg_idx.end()) {
+        continue;
+      }
+      overlap = true;
+      break;
+    }
+    if (overlap) {
+      // determine the condition
+      std::map<std::tuple<unsigned, unsigned, unsigned>, z3::expr_vector> src_dst;
+      for (auto TopFunc : TopLevelFunctions) {
+        auto SymName = FunctionToSymbolName.at(TopFunc);
+        auto &Record = allRecords.at(TopFunc);
+
+        if (perry_dma_info->src_symbol.find(TopFunc) != perry_dma_info->src_symbol.end()) {
+          for (auto &rec : Record) {
+            auto &trace = rec.trace;
+            auto &reg_accesses = rec.register_accesses;
+            unsigned src_reg;
+            unsigned dst_reg;
+            unsigned cnt_reg;
+            bool found_dir = false;
+            bool found_src = false;
+            bool found_dst = false;
+            bool found_cnt = false;
+            z3::expr the_cs = z3builder.getContext().bool_val(true);
+            for (auto &PTI : trace) {
+              auto &cur_access = reg_accesses[PTI.reg_access_idx];
+              if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+                continue;
+              }
+              if (containsReadTo(perry_dma_info->src_symbol[TopFunc].sym,
+                                cur_access->ExprInReg,
+                                perry_dma_info->src_symbol[TopFunc].idx)) {
+                src_reg = cur_access->offset;
+                found_src = true;
+                std::set<SymRead> contained_syms;
+                for (auto &cccsss : PTI.cur_constraints) {
+                  collectContainedSym(cccsss, contained_syms, SymName);
+                }
+                for (auto &PPTI : trace) {
+                  if (&PPTI == &PTI) {
+                    break;
+                  }
+                  auto &cur_acc = reg_accesses[PPTI.reg_access_idx];
+                  if (cur_acc->AccessType != RegisterAccess::REG_WRITE) {
+                    continue;
+                  }
+                  if (!containsReadRelatedRelaxed(contained_syms, cur_acc->ExprInReg)) {
+                    continue;
+                  }
+                  found_dir = true;
+                  z3::expr_vector bit_level_expr(z3builder.getContext());
+                  z3::expr_vector empty_blacklist(z3builder.getContext());
+                  z3builder.getBitLevelExpr(cur_acc->ExprInReg, bit_level_expr);
+                  SymRead sr(cur_acc->name, cur_acc->offset, cur_acc->width);
+                  auto cur_cs = z3builder.toZ3ExprAnd(PTI.cur_constraints);
+                  auto bit_constraints
+                    = z3builder.inferBitLevelConstraintWithBlacklist(
+                        cur_cs, sr, empty_blacklist, bit_level_expr);
+                  the_cs = bit_constraints.simplify();
+                  break;
+                }
+              }
+            }
+            if (found_dir && found_src) {
+              for (auto &PTI : trace) {
+                auto &cur_access = reg_accesses[PTI.reg_access_idx];
+                if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+                  continue;
+                }
+                if (containsReadTo(perry_dma_info->dst_symbol[TopFunc].sym,
+                                    cur_access->ExprInReg,
+                                    perry_dma_info->dst_symbol[TopFunc].idx)) {
+                  dst_reg = cur_access->offset;
+                  found_dst = true;
+                  break;
+                }
+              }
+            }
+
+            if (found_dir && found_dst && found_src) {
+              for (auto &PTI : trace) {
+                auto &cur_access = reg_accesses[PTI.reg_access_idx];
+                if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+                  continue;
+                }
+                if (containsReadTo(perry_dma_info->cnt_symbol[TopFunc].sym,
+                                   cur_access->ExprInReg,
+                                   perry_dma_info->cnt_symbol[TopFunc].idx)) {
+                  cnt_reg = cur_access->offset;
+                  found_cnt = true;
+                  break;
+                }
+              }
+              if (found_cnt) {
+                auto src_dst_cnt_tuple = std::make_tuple(src_reg, dst_reg, cnt_reg);
+                if (src_dst.find(src_dst_cnt_tuple) == src_dst.end()) {
+                  src_dst.insert(
+                    std::make_pair(src_dst_cnt_tuple, z3::expr_vector(z3builder.getContext())));
+                }
+                src_dst.at(src_dst_cnt_tuple).push_back(the_cs);
+              }
+            }
+          }
+        }
+      }
+
+      std::map<std::tuple<unsigned, unsigned, unsigned>, z3::expr> simplified_src_dst;
+      for (auto &ent : src_dst) {
+        auto &all_cs = ent.second;
+        z3::expr cs = z3builder.getLogicalBitExprOr(all_cs, false, true);
+        simplified_src_dst.insert(std::make_pair(ent.first, cs));
+      }
+
+      // find non-overlap conditions, if any
+      std::set<std::tuple<unsigned, unsigned, unsigned>> visited_src_dst;
+      for (auto &ent : simplified_src_dst) {
+        if (visited_src_dst.find(ent.first) == visited_src_dst.end()) {
+          visited_src_dst.insert(ent.first);
+          auto mirror_pair = std::make_tuple(
+            std::get<1>(ent.first), std::get<0>(ent.first), std::get<2>(ent.first));
+          visited_src_dst.insert(mirror_pair);
+          auto it = simplified_src_dst.find(mirror_pair);
+          assert(it != simplified_src_dst.end());
+          z3::expr this_cs = ent.second;
+          z3::expr mirror_cs = it->second;
+          if (this_cs.is_and() && mirror_cs.is_and()) {
+            // extract non-overlapping conditions
+            auto this_args = this_cs.args();
+            auto mirror_args = mirror_cs.args();
+            unsigned num_this_args = this_args.size();
+            unsigned num_mirror_args = mirror_args.size();
+            if (num_this_args != num_mirror_args) {
+              auto more_args = num_this_args >= num_mirror_args ? this_args : mirror_args;
+              auto less_args = num_this_args >= num_mirror_args ? mirror_args : this_args;
+              z3::expr_vector diff_args(z3builder.getContext());
+              z3::solver s(z3builder.getContext());
+              for (const auto &ma : more_args) {
+                bool found_same_expr = false;
+                for (const auto &la : less_args) {
+                  s.reset();
+                  s.add(ma != la);
+                  auto res = s.check();
+                  if (res == z3::unsat) {
+                    found_same_expr = true;
+                    break;
+                  }
+                }
+                if (!found_same_expr) {
+                  diff_args.push_back(ma);
+                }
+              }
+              z3::expr real_cond = diff_args.size() == 1 ? diff_args[0] : z3::mk_and(diff_args);
+              z3::expr neg_real_cond = !real_cond;
+              real_cond = real_cond.simplify();
+              neg_real_cond = neg_real_cond.simplify();
+              if (num_this_args >= num_mirror_args) {
+                final_src_dst.insert(std::make_pair(ent.first, real_cond));
+                final_src_dst.insert(std::make_pair(mirror_pair, neg_real_cond));
+              } else {
+                final_src_dst.insert(std::make_pair(ent.first, neg_real_cond));
+                final_src_dst.insert(std::make_pair(mirror_pair, real_cond));
+              }
+              continue;
+            }
+          }
+          final_src_dst.insert(std::make_pair(ent.first, this_cs));
+          final_src_dst.insert(std::make_pair(mirror_pair, mirror_cs));
+        }
+      }
+    } else {
+      std::vector<unsigned> src_regs(
+        perry_dma_info->src_reg_idx.begin(), perry_dma_info->src_reg_idx.end());
+      std::vector<unsigned> dst_regs(
+        perry_dma_info->dst_reg_idx.begin(), perry_dma_info->dst_reg_idx.end());
+      std::vector<unsigned> cnt_regs(
+        perry_dma_info->cnt_reg_idx.begin(), perry_dma_info->cnt_reg_idx.end());
+      std::sort(cnt_regs.begin(), cnt_regs.end());
+      std::sort(src_regs.begin(), src_regs.end());
+      std::sort(dst_regs.begin(), dst_regs.end());
+      unsigned num_regs = src_regs.size();
+      assert(src_regs.size() == dst_regs.size());
+      for (unsigned i = 0; i < num_regs; ++i) {
+        final_src_dst.insert(
+          std::make_pair(
+            std::make_tuple(src_regs[i], dst_regs[i], cnt_regs[i]),
+            z3builder.getContext().bool_val(true)));
       }
     }
   }
@@ -3188,6 +3760,161 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     OutContent += "\"";
   }
 
+  if (!final_src_dst.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_src_dst_cnt_tuples\": [\n";
+    bool add_comma = false;
+    for (auto &ent : final_src_dst) {
+      if (add_comma) {
+        OutContent += ",\n";
+      }
+      OutContent += "\t\t{ \"src\": ";
+      OutContent += std::to_string(std::get<0>(ent.first));
+      OutContent += ", \"dst\": ";
+      OutContent += std::to_string(std::get<1>(ent.first));
+      OutContent += ", \"cnt\": ";
+      OutContent += std::to_string(std::get<2>(ent.first));
+      OutContent += ", \"cond\": \"";
+      s.reset();
+      s.add(ent.second);
+      std::string smt2dump = s.to_smt2();
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      OutContent += "\" }";
+      add_comma = true;
+    }
+    OutContent += "\n\t]";
+  }
+
+  bool has_dma_xfer_cplt_irq_conds = false;
+  for (unsigned ii = 0; ii < dma_xfer_cplt_irq_conds.size(); ++ii) {
+    if (dma_xfer_cplt_irq_conds[ii].empty()) {
+      continue;
+    }
+    has_dma_xfer_cplt_irq_conds = true;
+    break;
+  }
+
+  if (has_dma_xfer_cplt_irq_conds) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_xfer_cplt_irq_conds\": [\n";
+    bool add_comma = false;
+    for (unsigned ii = 0; ii < dma_xfer_cplt_irq_conds.size(); ++ii) {
+      if (dma_xfer_cplt_irq_conds[ii].empty()) {
+        continue;
+      }
+      if (add_comma) {
+        OutContent += ",\n";
+      }
+      std::cerr << "DMA Xfer Cplt Condition for Channel " << ii << "\n";
+      auto rc = z3builder.getLogicalBitExprBatchOr(dma_xfer_cplt_irq_conds[ii], SymName);
+      std::cerr << rc << "\n";
+      s.reset();
+      s.add(rc);
+      std::string smt2dump = s.to_smt2();
+      OutContent += "\t\t{ \"channel\": ";
+      OutContent += std::to_string(ii);
+      OutContent += ", \"cond\": \"";
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      OutContent += "\" }";
+      add_comma = true;
+    }
+    OutContent += "\n\t]";
+  }
+
+  if (!dma_enable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_enable_conds\": [\n";
+    bool add_comma = false;
+    for (const auto &dec : dma_enable_conds) {
+      if (add_comma) {
+        OutContent += ",\n";
+      }
+      s.reset();
+      s.add(dec);
+      std::string smt2dump = s.to_smt2();
+      OutContent += "\t\t\"";
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      OutContent += "\"";
+      add_comma = true;
+    }
+    OutContent += "\n\t]";
+  }
+
+  if (!dma_disable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_disable_conds\": [\n";
+    bool add_comma = false;
+    for (const auto &dec : dma_disable_conds) {
+      if (add_comma) {
+        OutContent += ",\n";
+      }
+      s.reset();
+      s.add(dec);
+      std::string smt2dump = s.to_smt2();
+      OutContent += "\t\t\"";
+      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      OutContent += "\"";
+      add_comma = true;
+    }
+    OutContent += "\n\t]";
+  }
+
+  if (!dma_rx_enable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_rx_enable_conds\": \"";
+    s.reset();
+    z3::expr tmp = dma_rx_enable_conds.size() == 1 ? dma_rx_enable_conds.back()
+                                                   : z3::mk_or(dma_rx_enable_conds);
+    s.add(tmp);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"";
+  }
+
+  if (!dma_rx_disable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_rx_disable_conds\": \"";
+    s.reset();
+    z3::expr tmp = dma_rx_disable_conds.size() == 1 ? dma_rx_disable_conds.back()
+                                                    : z3::mk_or(dma_rx_disable_conds);
+    s.add(tmp);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"";
+  }
+
+  if (!dma_tx_enable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_tx_enable_conds\": \"";
+    s.reset();
+    z3::expr tmp = dma_tx_enable_conds.size() == 1 ? dma_tx_enable_conds.back()
+                                                   : z3::mk_or(dma_tx_enable_conds);
+    s.add(tmp);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"";
+  }
+
+  if (!dma_tx_disable_conds.empty()) {
+    OutContent += ",\n";
+
+    OutContent += "\t\"dma_tx_disable_conds\": \"";
+    s.reset();
+    z3::expr tmp = dma_tx_disable_conds.size() == 1 ? dma_tx_disable_conds.back()
+                                                    : z3::mk_or(dma_tx_disable_conds);
+    s.add(tmp);
+    std::string smt2dump = s.to_smt2();
+    OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+    OutContent += "\"";
+  }
+
   OutContent += "\n}";
   fwrite(OutContent.c_str(), 1, OutContent.size(), OF);
   fclose(OF);
@@ -3235,6 +3962,7 @@ int main(int argc, char **argv) {
   LoopRangeTy LoopRanges;
   perry_eth_info = new PerryEthInfo();
   perry_timer_info = new PerryTimerInfo();
+  perry_dma_info = new PerryDMAInfo();
   loadLoopInfo(LoopRanges);
   collectTopLevelFunctions(*mainModule, TopLevelFunctions, PtrFunction,
                            OkValuesMap);
@@ -3390,6 +4118,9 @@ int main(int argc, char **argv) {
 
   delete perry_timer_info;
   perry_timer_info = nullptr;
+
+  delete perry_dma_info;
+  perry_dma_info = nullptr;
 
   return 0;
 }

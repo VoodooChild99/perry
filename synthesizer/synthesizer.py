@@ -16,7 +16,7 @@ from cmsis_svd.parser import (
   SVDInterrupt,
   SVDRegisterArray
 )
-from typing import List, Mapping, Set, Tuple
+from typing import Dict, List, Mapping, Set, Tuple
 from parse import parse
 
 DEFAULT_TIME_SCALE = 'us'
@@ -24,6 +24,17 @@ DEFAULT_TIME_SCALE = 'us'
 TIMER_HOOKS = [
   "HAL_TIM_PeriodElapsedCallback"
 ]
+
+class DMAInfo:
+  def __init__(self) -> None:
+    self.src = None
+    self.dst = None
+    self.cnt = None
+    self.cond = None
+    self.irq_cond = None
+    self.enable_cond = None
+    self.disable_cond = None
+    self.channel_idx = None
 
 class Synthesizer:
   def __init__(self, config_file: str, output_dir: str, all_in_one: bool, debug: bool) -> None:
@@ -379,6 +390,14 @@ class Synthesizer:
     self.timer_enable_constraints = None
     self.timer_disable_constraints = None
     self.timer_irq_constraints = None
+    self.dma_src_dst_cnt_tuples = None
+    self.dma_xfer_cplt_irq_conds = None
+    self.dma_enable_conds = None
+    self.dma_disable_conds = None
+    self.dma_rx_enable_conds = None
+    self.dma_rx_disable_conds = None
+    self.dma_tx_enable_conds = None
+    self.dma_tx_disable_conds = None
 
     if constraint_file is None:
       self.read_datareg_offset = []
@@ -538,6 +557,51 @@ class Synthesizer:
         else:
           assert(len(exprs) == 1)
           self.timer_irq_constraints: ExprRef = exprs[0]
+      # DMA
+      if 'dma_src_dst_cnt_tuples' in loaded_json:
+        self.dma_src_dst_cnt_tuples = loaded_json['dma_src_dst_cnt_tuples']
+      if 'dma_xfer_cplt_irq_conds' in loaded_json:
+        self.dma_xfer_cplt_irq_conds = loaded_json['dma_xfer_cplt_irq_conds']
+      if 'dma_enable_conds' in loaded_json:
+        self.dma_enable_conds = loaded_json['dma_enable_conds']
+      if 'dma_disable_conds' in loaded_json:
+        self.dma_disable_conds = loaded_json['dma_disable_conds']
+      if 'dma_rx_enable_conds' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['dma_rx_enable_conds'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.dma_rx_enable_conds = None
+        else:
+          assert(len(exprs) == 1)
+          self.dma_rx_enable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+      if 'dma_rx_disable_conds' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['dma_rx_disable_conds'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.dma_rx_disable_conds = None
+        else:
+          assert(len(exprs) == 1)
+          self.dma_rx_disable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+      if 'dma_tx_enable_conds' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['dma_tx_enable_conds'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.dma_tx_enable_conds = None
+        else:
+          assert(len(exprs) == 1)
+          self.dma_tx_enable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+      if 'dma_tx_disable_conds' in loaded_json:
+        s1 = Solver()
+        s1.from_string(loaded_json['dma_tx_disable_conds'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          self.dma_tx_disable_conds = None
+        else:
+          assert(len(exprs) == 1)
+          self.dma_tx_disable_conds: ExprRef = self.__normalize_constraint(exprs[0])
     ############
     ### Misc ###
     ############
@@ -629,6 +693,128 @@ class Synthesizer:
         if co not in self.reg_offset_to_cond_actions:
           self.reg_offset_to_cond_actions[co] = []
         self.reg_offset_to_cond_actions[co].append(pair + (action_reg_offset,))
+    # collect DMA channel infos
+    self.dma_channel_infos: Dict[int, List[DMAInfo]] = None
+    num_channels = 0
+    if self.dma_src_dst_cnt_tuples is not None:
+      self.dma_channel_infos = {}
+      cnt_regs = []
+      for src_dst_cnt_tuple in self.dma_src_dst_cnt_tuples:
+        if src_dst_cnt_tuple['cnt'] not in cnt_regs:
+          cnt_regs.append(src_dst_cnt_tuple['cnt'])
+      cnt_regs.sort()
+      num_channels = len(cnt_regs)
+      for src_dst_cnt_tuple in self.dma_src_dst_cnt_tuples:
+        channel_idx = None
+        for i in range(0, len(cnt_regs)):
+          if src_dst_cnt_tuple['cnt'] == cnt_regs[i]:
+            channel_idx = i
+            break
+        if channel_idx is None:
+          continue
+        if channel_idx not in self.dma_channel_infos:
+          self.dma_channel_infos[channel_idx] = []
+        new_dma_info = DMAInfo()
+        new_dma_info.channel_idx = channel_idx
+        new_dma_info.cnt = src_dst_cnt_tuple['cnt']
+        new_dma_info.src = src_dst_cnt_tuple['src']
+        new_dma_info.dst = src_dst_cnt_tuple['dst']
+        s1 = Solver()
+        s1.from_string(src_dst_cnt_tuple['cond'])
+        exprs = s1.assertions();
+        if len(exprs) == 0:
+          new_dma_info.cond = None
+        else:
+          assert(len(exprs) == 1)
+          new_dma_info.cond: ExprRef = self.__normalize_constraint(exprs[0])
+        self.dma_channel_infos[channel_idx].append(new_dma_info)
+    if self.dma_xfer_cplt_irq_conds is not None:
+      if self.dma_channel_infos is None:
+        self.dma_channel_infos = {}
+      for ic in self.dma_xfer_cplt_irq_conds:
+        s1 = Solver()
+        s1.from_string(ic['cond'])
+        exprs = s1.assertions();
+        ice = None
+        if len(exprs) == 1:
+          ice = self.__normalize_constraint(exprs[0])
+        if ic['channel'] not in self.dma_channel_infos:
+          self.dma_channel_infos[ic['channel']] = []
+          new_dma_info = DMAInfo()
+          new_dma_info.channel_idx = ic['channel']
+          new_dma_info.irq_cond = ice
+          self.dma_channel_infos[new_dma_info.channel_idx].append(new_dma_info)
+        else:
+          for dci in self.dma_channel_infos[ic['channel']]:
+            dci.irq_cond = ice
+    if self.dma_enable_conds is not None:
+      if self.dma_channel_infos is None:
+        self.dma_channel_infos = {}
+      dma_enables_conds = []
+      for ec in self.dma_enable_conds:
+        s1 = Solver()
+        s1.from_string(ec)
+        exprs = s1.assertions();
+        if len(exprs) == 1:
+          dma_enables_conds.append(self.__normalize_constraint(exprs[0]))
+      dma_enable_regs = []
+      for dec in dma_enables_conds:
+        tmp = self.__collect_related_regs(dec).pop()
+        if tmp not in dma_enable_regs:
+          dma_enable_regs.append(tmp)
+      dma_enable_regs.sort()
+      for dec in dma_enables_conds:
+        tmp = self.__collect_related_regs(dec).pop()
+        channel_idx = None
+        for i in range(0, len(dma_enable_regs)):
+          if tmp == dma_enable_regs[i]:
+            channel_idx = i
+            break
+        if channel_idx is None:
+          continue
+        if channel_idx not in self.dma_channel_infos:
+          self.dma_channel_infos[channel_idx] = []
+          new_dma_info = DMAInfo()
+          new_dma_info.channel_idx = channel_idx
+          new_dma_info.enable_cond = dec
+          self.dma_channel_infos[channel_idx].append(new_dma_info)
+        else:
+          for dci in self.dma_channel_infos[channel_idx]:
+            dci.enable_cond = dec
+    if self.dma_disable_conds is not None:
+      if self.dma_channel_infos is None:
+        self.dma_channel_infos = {}
+      dma_disable_conds = []
+      for ec in self.dma_disable_conds:
+        s1 = Solver()
+        s1.from_string(ec)
+        exprs = s1.assertions();
+        if len(exprs) == 1:
+          dma_disable_conds.append(self.__normalize_constraint(exprs[0]))
+      dma_disable_regs = []
+      for dec in dma_disable_conds:
+        tmp = self.__collect_related_regs(dec).pop()
+        if tmp not in dma_disable_regs:
+          dma_disable_regs.append(tmp)
+      dma_disable_regs.sort()
+      for dec in dma_disable_conds:
+        tmp = self.__collect_related_regs(dec).pop()
+        channel_idx = None
+        for i in range(0, len(dma_disable_regs)):
+          if tmp == dma_disable_regs[i]:
+            channel_idx = i
+            break
+        if channel_idx is None:
+          continue
+        if channel_idx not in self.dma_channel_infos:
+          self.dma_channel_infos[channel_idx] = []
+          new_dma_info = DMAInfo()
+          new_dma_info.channel_idx = channel_idx
+          new_dma_info.disable_cond = dec
+          self.dma_channel_infos[channel_idx].append(new_dma_info)
+        else:
+          for dci in self.dma_channel_infos[channel_idx]:
+            dci.disable_cond = dec
     # name
     if name is None or len(name) == 0:
       self.name = target
@@ -669,6 +855,8 @@ class Synthesizer:
     self.eth_receive_func_name = "{}_net_receive".format(self.full_name)
     self.src_include.append('{}.h'.format(self.symbol_name))
     self.timer_callback_func_name = "{}_timer_callback".format(self.full_name)
+    if self.dma_channel_infos is not None:
+      self.dma_struct_name = self.struct_name
   
   def __setup_board_ctx(self, y):
     self.cpu_type_name = y['cpu']
@@ -1154,6 +1342,14 @@ struct {0} {{
       content += '\t/* timer */\n'
       content += '\tQEMUTimer *timer;\n'
       content += '\tuint8_t enabled;\n\n'
+    if self.dma_rx_enable_conds is not None:
+      content += '\t/* dma */\n'
+      content += '\t{} *dma;\n'.format(self.dma_struct_name)
+    if self.dma_channel_infos is not None:
+      content += '\t/* dma channel enable flags*/\n'
+      content += '\tuint8_t channel_enabled[{}];\n'.format(len(self.dma_channel_infos))
+    content += '\t/* base */\n'
+    content += '\tuint32_t base;\n'
     body = body.format(self.struct_name, content)
     return body
 
@@ -1241,6 +1437,79 @@ static int {0}(void *opaque) {{
     return body
 
   def _gen_src_receive(self) -> str:
+    if self.dma_channel_infos is not None:
+      self.dma_recv_func_name = self.receive_func_name
+      body = \
+"""
+static void {0}(struct {1} *t, uint32_t addr, uint8_t data) {{
+\tint do_update = 0;
+\tint channel_idx = -1;
+\t{4}
+\tswitch (channel_idx) {{
+{2}
+\t\tdefault: break;
+\t}}
+\tif (do_update) {{
+\t\t{3}(t, channel_idx, 1);
+\t\t{3}(t, channel_idx, 0);
+\t}}
+}}
+"""
+      recv_exprs = ''
+      get_channel_exprs = ''
+      counter = 0
+      for idx in self.dma_channel_infos:
+        counter += 1
+        dci = self.dma_channel_infos[idx][0]
+        set_irq_exprs = ''
+        for e in self.__z3_expr_to_reg(dci.irq_cond, True):
+          set_irq_exprs += '\t\t\t\t{}\n'.format(e)
+        recv_exprs += \
+'''
+\t\tcase {0}: {{
+\t\t\tif (t->{1}) {{
+\t\t\t\tif ({2}) {{
+\t\t\t\t\tcpu_physical_memory_write(t->{3}, &data, 1);
+\t\t\t\t\tt->{3} += 1;
+\t\t\t\t}} else {{
+\t\t\t\t\tcpu_physical_memory_write(t->{4}, &data, 1);
+\t\t\t\t\tt->{4} += 1;
+\t\t\t\t}}
+\t\t\t\tt->{1} -= 1;
+\t\t\t}}
+\t\t\tif (t->{1} == 0) {{
+{5}
+\t\t\t\tdo_update = 1;
+\t\t\t}}
+\t\t\tbreak;
+\t\t}}
+'''.format(
+      idx,
+      self.offset_to_reg[dci.cnt].name,
+      self.__z3_expr_to_cond(dci.cond),
+      self.offset_to_reg[dci.src].name,
+      self.offset_to_reg[dci.dst].name,
+      set_irq_exprs)
+        get_channel_exprs += \
+"""
+if (({0}) && (t->{1} == addr || t->{2} == addr)) {{
+\t\tchannel_idx = {3};
+\t}} 
+""".strip('\n').format(
+      self.__z3_expr_to_cond(dci.enable_cond),
+      self.offset_to_reg[dci.src].name,
+      self.offset_to_reg[dci.dst].name,
+      idx)
+        if counter != len(self.dma_channel_infos):
+          get_channel_exprs += ' else '
+      body = body.format(
+        self.receive_func_name,
+        self.struct_name,
+        recv_exprs,
+        self.update_func_name,
+        get_channel_exprs
+      )
+      return body
     if not self.has_data_reg:
       return ''
     body = \
@@ -1253,6 +1522,17 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
 }}
 """
     content = ''
+    if self.dma_rx_enable_conds is not None:
+      content += \
+"""
+\tif ({0}) {{
+\t\t{1}({2}->dma, {2}->base + {3}, *buf);
+\t}}
+""".format(
+      self.__z3_expr_to_cond(self.dma_rx_enable_conds),
+      self.dma_recv_func_name,
+      self.periph_instance_name,
+      self.read_datareg_offset[0])
     for r_offset in self.read_datareg_offset:
       rdr = self.offset_to_reg[r_offset]
       content += '\t{}->{} = *buf;\n'.format(
@@ -1272,6 +1552,72 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
     return body
 
   def _gen_src_transmit(self) -> str:
+    if self.dma_channel_infos is not None:
+      body = \
+"""
+static void {0}(struct {1} *t, int channel_idx) {{
+\tuint8_t data;
+\tswitch (channel_idx) {{
+{2}
+\t\tdefault: break;
+\t}}
+\t{3}(t, channel_idx, 1);
+\t{3}(t, channel_idx, 0);
+}}
+"""
+      trans_exprs = ''
+      for idx in self.dma_channel_infos:
+        dci = self.dma_channel_infos[idx][0]
+        set_irq_exprs = ''
+        for e in self.__z3_expr_to_reg(dci.irq_cond, True):
+          set_irq_exprs += '\t\t\t{}\n'.format(e)
+        trans_exprs += \
+"""
+\t\tcase {0}: {{
+\t\t\tif (!t->channel_enabled[{0}]) {{
+\t\t\t\tbreak;
+\t\t\t}}
+\t\t\tif (t->{1} < 0x40000000 && t->{2} < 0x40000000) {{
+\t\t\t\tfor (int i = 0; i < t->{3}; ++i) {{
+\t\t\t\t\tif ({4}) {{
+\t\t\t\t\t\tcpu_physical_memory_read(t->{1}, &data, 1);
+\t\t\t\t\t\tcpu_physical_memory_write(t->{2}, &data, 1);
+\t\t\t\t\t}} else {{
+\t\t\t\t\t\tcpu_physical_memory_read(t->{2}, &data, 1);
+\t\t\t\t\t\tcpu_physical_memory_write(t->{1}, &data, 1);
+\t\t\t\t\t}}
+\t\t\t\t\t\tt->{1} += 1;
+\t\t\t\t\t\tt->{2} += 1;
+\t\t\t\t}}
+\t\t\t}} else {{
+\t\t\t\tfor (int i = 0; i < t->{3}; ++i) {{
+\t\t\t\t\tif ({4}) {{
+\t\t\t\t\t\tcpu_physical_memory_read(t->{1}, &data, 1);
+\t\t\t\t\t\tcpu_physical_memory_write(t->{2}, &data, 1);
+\t\t\t\t\t\tt->{1} += 1;
+\t\t\t\t\t}} else {{
+\t\t\t\t\t\tcpu_physical_memory_read(t->{2}, &data, 1);
+\t\t\t\t\t\tcpu_physical_memory_write(t->{1}, &data, 1);
+\t\t\t\t\t\tt->{2} += 1;
+\t\t\t\t\t}}
+\t\t\t\t}}
+\t\t\t}}
+{5}
+\t\t\tbreak;
+\t\t}}
+""".format(
+      idx,
+      self.offset_to_reg[dci.src].name,
+      self.offset_to_reg[dci.dst].name,
+      self.offset_to_reg[dci.cnt].name,
+      self.__z3_expr_to_cond(dci.cond),
+      set_irq_exprs)
+      body = body.format(
+        self.transmit_func_name,
+        self.struct_name,
+        trans_exprs,
+        self.update_func_name)
+      return body
     if not self.has_data_reg:
       return ''
     body = \
@@ -1348,6 +1694,18 @@ typedef struct {{
     return body
   
   def _gen_src_update_func(self) -> str:
+    if self.dma_channel_infos is not None:
+      body = \
+"""
+static void {0}({1} *{2}, int channel_idx, int level) {{
+\tqemu_set_irq({2}->irq[channel_idx], level);
+}}
+"""
+      body = body.format(
+        self.update_func_name,
+        self.struct_name,
+        self.periph_instance_name)
+      return body
     if not self.has_data_reg:
       return ''
     if self.irq_constraint is None:
@@ -1999,6 +2357,48 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
             self.periph_instance_name, time_scale.upper(),
             self.timer_callback_func_name)
           content += '\t\t\t}\n'
+      if self.dma_channel_infos is not None:
+        for idx in self.dma_channel_infos:
+          dci = self.dma_channel_infos[idx][0]
+          enable_reg = self.__collect_related_regs(dci.enable_cond).pop()
+          disable_reg = self.__collect_related_regs(dci.disable_cond).pop()
+          if r.address_offset == enable_reg:
+            content += \
+'''
+\t\t\tif (!{4}->channel_enabled[{6}] && {0}) {{
+\t\t\t\t{4}->channel_enabled[{6}] = 1;
+\t\t\t\tif ({4}->{1} < 0x40000000 && {4}->{2} < 0x40000000) {{
+\t\t\t\t\t{3}({4}, {6});
+\t\t\t\t}} else {{
+\t\t\t\t\tif ({5}) {{
+\t\t\t\t\t\tif ({4}->{1} < 0x40000000) {{
+\t\t\t\t\t\t\t{3}({4}, {6});
+\t\t\t\t\t\t}}
+\t\t\t\t\t}} else {{
+\t\t\t\t\t\tif ({4}->{2} < 0x40000000) {{
+\t\t\t\t\t\t\t{3}({4}, {6});
+\t\t\t\t\t\t}}
+\t\t\t\t\t}}
+\t\t\t\t}}
+\t\t\t}}
+'''.format(
+      self.__z3_expr_to_cond(dci.enable_cond),
+      self.offset_to_reg[dci.src].name,
+      self.offset_to_reg[dci.dst].name,
+      self.transmit_func_name,
+      self.periph_instance_name,
+      self.__z3_expr_to_cond(dci.cond),
+      idx)
+          if r.address_offset == disable_reg:
+            content += \
+"""
+\t\t\tif ({0}) {{
+\t\t\t\t{1}->channel_enabled[{2}] = 0;
+\t\t\t}}
+""".format(
+      self.__z3_expr_to_cond(dci.disable_cond),
+      self.periph_instance_name,
+      idx)
       content += '\t\t\tbreak;\n'
     body = body.format(
       self.write_func_name,
@@ -2348,6 +2748,11 @@ static void {0}(MachineState *machine) {{
               if p._interrupts:
                 i_irq += p._interrupts
           p_bases = sorted(p_bases)
+        if not is_pattern:
+          content += '\t{}->base = {};\n'.format(
+            ptr_name, hex(self.__get_peripheral_base(self.name_to_peripheral[i])))
+        else:
+          content += '\t{}->base = {};\n'.format(ptr_name, hex(p_bases[0]))
         if i_irq is not None:
           for irq_idx in range(len(i_irq)):
             content += '\tsysbus_connect_irq(SYS_BUS_DEVICE({}), {}, qdev_get_gpio_in(DEVICE(&(sms->armv7m)), {}));\n'.format(
@@ -2582,15 +2987,19 @@ type_init({0});
       for abc in p['additional-bitcode']:
         additional_bc.append(str(config_file_path.parent / abc))
     target_periph_base = []
+    target_periph_end = []
     for ppp in self.device.peripherals:
       if fnmatch.fnmatch(ppp.name, target):
         target_periph_base.append(self.__get_peripheral_base(ppp))
+        target_periph_end.append(self.__get_peripheral_end(ppp))
     target_periph_base = sorted(target_periph_base)
+    target_periph_end = sorted(target_periph_end, reverse=True)
     addon_cmd = [
       "--target-periph-struct={}".format(target_struct),
       "--target-periph-address={}".format(
         hex(target_periph_base[0])
       ),
+      "--target-periph-size={}".format(hex(target_periph_end[0] - target_periph_base[0])),
       "--perry-out-file={}".format(out_file),
     ]
 

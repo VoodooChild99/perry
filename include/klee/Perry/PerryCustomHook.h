@@ -13,4 +13,9 @@ struct PerryCustomHook {
     
     static const std::vector<PerryCustomHook> perry_custom_hooks;
 };
+
+#define PERRY_DMA_XFER_CPLT_HOOK_IDX    0
+
+#define PERRY_DMA_XFER_CPLT_HOOK    "perry_dma_hook"
+
 }

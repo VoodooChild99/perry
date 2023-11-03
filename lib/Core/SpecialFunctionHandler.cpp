@@ -1333,6 +1333,10 @@ handleOOB(ExecutionState &state, KInstruction *target,
   executor.terminateStateOnError(state, "Array OOB access",
                                  StateTerminationType::Assert);
 }
+const std::vector<PerryCustomHook> PerryCustomHook::perry_custom_hooks = {
+  PerryCustomHook(PERRY_DMA_XFER_CPLT_HOOK, 0),
+};
+
 void SpecialFunctionHandler::
 handlePerryCustomHook(ExecutionState &state,
                       KInstruction *target, std::vector<ref<Expr>> &arguments) {
@@ -1359,6 +1363,17 @@ handlePerryCustomHook(ExecutionState &state,
       for (auto &CE : state.constraints) {
         cur_constraints.push_back(
           state.getPerryExpr(executor.perryExprManager, CE));
+      }
+      if (hk.index == PERRY_DMA_XFER_CPLT_HOOK_IDX) {
+        if (arguments.size() > 1) {
+          klee::ConstantExpr *cidx = dyn_cast<ConstantExpr>(arguments[1]);
+          if (cidx) {
+            std::string hn = hk.name + std::to_string(cidx->getZExtValue());
+            state.executed_hooks.emplace_back(
+              PerryHook(hn, cur_constraints));
+            return;
+          }
+        }
       }
       state.executed_hooks.emplace_back(
         PerryHook(hk.name, cur_constraints));
