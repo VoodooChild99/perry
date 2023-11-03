@@ -4097,6 +4097,7 @@ int main(int argc, char **argv) {
   for (auto &fh : PerryFunctionHooks) {
     perry_func_hooks.insert(fh);
   }
+  auto start_time = std::chrono::system_clock::now();
   for (auto TopFunc : TopLevelFunctions) {
     records.clear();
     singlerun(replayPath, IOpts, ctx, Opts, kmodule, "__perry_dummy_" + TopFunc,
@@ -4104,10 +4105,16 @@ int main(int argc, char **argv) {
     all_records[TopFunc] = std::move(records);
     do_bind = false;
   }
-
+  auto end_time = std::chrono::system_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+  klee_message("Trace collection consumed: %ld\n", duration.count());
+  start_time = std::chrono::system_clock::now();
   postProcess(TopLevelFunctions, FunctionToSymbolName, all_records, liveTaint,
               OkValuesMap, nm, LoopRanges);
 
+  end_time = std::chrono::system_clock::now();
+  duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+  klee_message("Model inference consumed: %ld\n", duration.count());
   // release memory
   delete kmodule;
   for (auto node : ns) {
