@@ -205,7 +205,7 @@ struct PerryCheckPointInternal {
 };
 
 struct PerryHook {
-  const std::string &hook_name;
+  std::string hook_name;
   PerryTrace::Constraints constraints;
 
   PerryHook(const std::string &hook_name, const PerryTrace::Constraints &constraints)
