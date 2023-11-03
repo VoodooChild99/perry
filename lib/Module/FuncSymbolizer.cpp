@@ -388,9 +388,8 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
       Value *pLoc = IRB.getInt32(TargetStructLoc);
       unsigned target_size = TargetStructSize;
       // allocate it
-      if (target_size == 0) {
-        target_size = DICT->getSizeInBits() / 8;
-      }
+      unsigned s_size = DICT->getSizeInBits() / 8;
+      target_size = std::max(target_size, s_size);
       IRB.CreateCall(AllocFixFC, {pLoc, IRB.getInt32(target_size)});
       // symbolize it
       symbolizeValue(IRB, pLoc, "s0", target_size);
