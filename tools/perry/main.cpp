@@ -32,6 +32,7 @@
 #include "klee/Perry/PerryLoop.h"
 #include "klee/Perry/PerryEthInfo.h"
 #include "klee/Perry/PerryTimerInfo.h"
+#include "klee/Perry/PerryCustomHook.h"
 
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -860,6 +861,7 @@ static const char *modelledExternals[] = {
   "__ubsan_handle_mul_overflow",
   "__ubsan_handle_divrem_overflow",
   "__ubsan_handle_out_of_bounds",
+  "perry_klee_hook"
 };
 
 // Symbols we aren't going to warn about

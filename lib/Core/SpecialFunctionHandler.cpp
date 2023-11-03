@@ -26,6 +26,8 @@
 #include "klee/Support/Debug.h"
 #include "klee/Support/ErrorHandling.h"
 #include "klee/Support/OptionCategories.h"
+#include "klee/Perry/PerryTrace.h"
+#include "klee/Perry/PerryCustomHook.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DataLayout.h"
@@ -155,6 +157,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_get_return_value", handleGetReturnValue, false),
   add("__assert_func", handleAssertFunc, false),
   add("__ubsan_handle_out_of_bounds", handleOOB, false),
+  addDNR("perry_klee_hook", handlePerryCustomHook),
 
 #undef addDNR
 #undef add
@@ -1329,4 +1332,37 @@ handleOOB(ExecutionState &state, KInstruction *target,
 {
   executor.terminateStateOnError(state, "Array OOB access",
                                  StateTerminationType::Assert);
+}
+void SpecialFunctionHandler::
+handlePerryCustomHook(ExecutionState &state,
+                      KInstruction *target, std::vector<ref<Expr>> &arguments) {
+  if (arguments.size() < 1) {
+    executor.terminateStateOnUserError(state,
+      "Incorrect number of arguments to perry_klee_hook(size_t)");
+    return;
+  }
+
+  ref<Expr> val = arguments[0];
+  klee::ConstantExpr  *CE_val = dyn_cast<ConstantExpr>(val);
+  if (!CE_val) {
+    std::string err_msg;
+    llvm::raw_string_ostream OS(err_msg);
+    OS << "Un-constant number not supported: ";
+    val->print(OS);
+    executor.terminateStateOnUserError(state, err_msg.c_str());
+    return;
+  }
+
+  for (auto &hk : PerryCustomHook::perry_custom_hooks) {
+    if (hk.index == CE_val->getZExtValue()) {
+      std::vector<ref<PerryExpr>> cur_constraints;
+      for (auto &CE : state.constraints) {
+        cur_constraints.push_back(
+          state.getPerryExpr(executor.perryExprManager, CE));
+      }
+      state.executed_hooks.emplace_back(
+        PerryHook(hk.name, cur_constraints));
+      return;
+    }
+  }
 }
