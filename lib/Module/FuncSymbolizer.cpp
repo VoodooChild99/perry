@@ -537,19 +537,18 @@ void FuncSymbolizePass::createPeriph(IRBuilder<> &IRB, Module &M) {
           break;
         }
       }
-      if (!DICT) {
-        klee_error("Cannot locate struct");
-      }
-      offset = sz;
-      sz = (DICT->getSizeInBits() >> 3);
-      while (1) {
-        offset += DCD->start_padding;
-        if (offset >= TargetStructSize) {
-          break;
+      if (DICT) {
+        offset = sz;
+        sz = (DICT->getSizeInBits() >> 3);
+        while (1) {
+          offset += DCD->start_padding;
+          if (offset >= TargetStructSize) {
+            break;
+          }
+          taintPeriph(IRB, M, DICT, Taint, offset);
+          offset += sz;
+          offset += DCD->end_padding;
         }
-        taintPeriph(IRB, M, DICT, Taint, offset);
-        offset += sz;
-        offset += DCD->end_padding;
       }
     }
   }
