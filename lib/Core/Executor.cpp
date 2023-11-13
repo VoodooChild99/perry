@@ -5224,6 +5224,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
                   if (!is_reg_write) {
                     wos->write(offset, value);
                   }
+                  cur = branches.second;
                 }
               }
               if (cur) {
