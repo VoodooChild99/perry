@@ -338,13 +338,17 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
   z3::solver s1 = z3::solver(ctx);
   z3::solver s2 = z3::solver(ctx);
 
+  if (original.is_true() || original.is_false()) {
+    return original;
+  }
+
   s1.add(original);
   s2.add(!original);
-  s1.set("core.minimize", true);
+  s2.set("core.minimize", true);
 
   z3::expr_vector clauses(ctx);
-  while (s2.check() == z3::sat) {
-    z3::model mdl = s2.get_model();
+  while (s1.check() == z3::sat) {
+    z3::model mdl = s1.get_model();
     unsigned num_const = mdl.num_consts();
     z3::expr_vector core(ctx);
     z3::expr_vector clause(ctx);
@@ -357,26 +361,28 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
         core.push_back(!(decl()));
       }
     }
-    assert(z3::unsat == s1.check(core));
-    for (auto c : s1.unsat_core()) {
+    assert(z3::unsat == s2.check(core));
+    for (auto c : s2.unsat_core()) {
       clause.push_back(!c);
     }
     if (clause.size() > 1) {
       auto tmp = z3::mk_or(clause);
       clauses.push_back(tmp);
-      s2.add(tmp);
-    } else {
+      s1.add(tmp);
+    } else if (clause.size() == 1) {
       auto tmp = clause[0];
       clauses.push_back(tmp);
-      s2.add(tmp);
+      s1.add(tmp);
+    } else {
+      klee_error("Error when simplify logical expressions: failed to get unsat core");
     }
   }
   if (clauses.size() == 0) {
-    return ctx.bool_val(true);
+    klee_error("Error when simplify logical expressions: the size of the final clause is 0");
   } else if (clauses.size() > 1) {
-    return z3::mk_and(clauses);
+    return !z3::mk_and(clauses);
   } else {
-    return clauses[0];
+    return !clauses[0];
   }
   
 }
