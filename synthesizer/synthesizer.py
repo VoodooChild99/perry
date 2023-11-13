@@ -403,6 +403,7 @@ class Synthesizer:
     self.dma_rx_disable_conds = None
     self.dma_tx_enable_conds = None
     self.dma_tx_disable_conds = None
+    self.has_update_func = False
 
     if constraint_file is None:
       self.read_datareg_offset = []
@@ -1523,7 +1524,7 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
 \t{1} *{2} = {3}(opaque);
 
 {4}
-\t{5}({2});
+{5}
 }}
 """
     content = ''
@@ -1546,13 +1547,16 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
     if self.read_constraint is not None:
       for s in self.__z3_expr_to_reg(self.read_constraint, True):
         content += '\t{}\n'.format(s)
+    do_update_expr = ''
+    if self.has_update_func:
+      do_update_expr += '\t{}({});'.format(self.update_func_name, self.periph_instance_name)
     body = body.format(
       self.receive_func_name,
       self.struct_name,
       self.periph_instance_name,
       self.full_name_upper,
       content,
-      self.update_func_name
+      do_update_expr
     )
     return body
 
@@ -1633,7 +1637,7 @@ static gboolean {0}(void *do_not_use, GIOCondition cond, void *opaque) {{
 
 \t{2}->watch_tag = 0;
 {4}
-\t{5}({2});
+{5}
 
 \tret = qemu_chr_fe_write(&({2}->chr), (uint8_t*)&({2}->{6}), 1);
 \tif (ret <= 0){{
@@ -1647,7 +1651,7 @@ static gboolean {0}(void *do_not_use, GIOCondition cond, void *opaque) {{
 
 buffer_drained:
 {7}
-\t{5}({2});
+{5}
 
 \treturn FALSE;
 }}
@@ -1674,13 +1678,16 @@ buffer_drained:
     for s in expr_set:
       content_after_write += '\t{}\n'.format(s)
     assert(len(self.write_datareg_offset) == 1)
+    do_update_expr = ''
+    if self.has_update_func:
+      do_update_expr += '\t{}({});'.format(self.update_func_name, self.periph_instance_name)
     body = body.format(
       self.transmit_func_name,
       self.struct_name,
       self.periph_instance_name,
       self.full_name_upper,
       content_before_write,
-      self.update_func_name,
+      do_update_expr,
       self.offset_to_reg[self.write_datareg_offset[0]].name,
       content_after_write
     )
@@ -1700,6 +1707,7 @@ typedef struct {{
   
   def _gen_src_update_func(self) -> str:
     if self.dma_channel_infos is not None:
+      self.has_update_func = True
       body = \
 """
 static void {0}({1} *{2}, int channel_idx, int level) {{
@@ -1729,6 +1737,7 @@ static void {0}({1} *{2}) {{
       self.periph_instance_name,
       irq_condition
     )
+    self.has_update_func = True
     return body
   
   def _gen_eth_timer_callback_func(self) -> str:
@@ -2240,9 +2249,10 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
           self.periph_instance_name
         )
         # 3. update irq:
-        content += '\t\t\t{}({});\n'.format(
-          self.update_func_name, self.periph_instance_name
-        )
+        if self.has_update_func:
+          content += '\t\t\t{}({});\n'.format(
+            self.update_func_name, self.periph_instance_name
+          )
       content += '\t\t\tbreak;\n'
     body = body.format(
       self.read_func_name,
@@ -2331,7 +2341,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       if r.address_offset in self.irq_reg_offset:
         do_irq_update = True
 
-      if do_irq_update:
+      if do_irq_update and self.has_update_func:
         content += '\t\t\t{}({});\n'.format(
           self.update_func_name, self.periph_instance_name
         )
