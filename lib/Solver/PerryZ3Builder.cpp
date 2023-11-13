@@ -1147,20 +1147,62 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
       }
       case Z3_OP_NOT: {
         assert(e.num_args() == 1);
-        auto res = reconstructExpr(
-          e.arg(0), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
-        if (!res.empty()) {
-          if (simplify_not) {
-            auto child = e.arg(0);
-            if (!child.is_true() && !child.is_false() && child.is_const()) {
-              // !(sym == 1) --> sym == 0
-              assert(res[0].is_eq());
-              ret.push_back(res[0].arg(0) == 0);
-              break;
+        auto child = e.arg(0);
+        if (child.is_or()) {
+          // not or = and not
+          z3::expr_vector tmp_vec(ctx);
+          for (const auto &sub_child : child.args()) {
+            tmp_vec.push_back(!sub_child);
+          }
+          assert(tmp_vec.size() >= 1);
+          if (tmp_vec.size() == 1) {
+            auto res = reconstructExpr(
+              tmp_vec[0], orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          } else {
+            auto res = reconstructExpr(
+              z3::mk_and(tmp_vec), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
             }
           }
-          if (res.size() > 0) {
-            ret.push_back(!res[0]);
+        } else if (child.is_and()) {
+          // not and = or not
+          z3::expr_vector tmp_vec(ctx);
+          for (const auto &sub_child : child.args()) {
+            tmp_vec.push_back(!sub_child);
+          }
+          assert(tmp_vec.size() >= 1);
+          if (tmp_vec.size() == 1) {
+            auto res = reconstructExpr(
+              tmp_vec[0], orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          } else {
+            auto res = reconstructExpr(
+              z3::mk_or(tmp_vec), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          }
+        } else {
+          auto res = reconstructExpr(
+            child, orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+          if (!res.empty()) {
+            if (simplify_not) {
+              if (!child.is_true() && !child.is_false() && child.is_const()) {
+                // !(sym == 1) --> sym == 0
+                assert(res[0].is_eq());
+                ret.push_back(res[0].arg(0) == 0);
+                break;
+              }
+            }
+            if (res.size() > 0) {
+              ret.push_back(!res[0]);
+            }
           }
         }
         break;
