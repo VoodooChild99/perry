@@ -58,13 +58,23 @@ z3::expr PerryZ3Builder::toZ3Expr(const ref<PerryExpr> &PE) {
     }
     case Expr::ZExt: {
       const PerryZExtExpr *ZE = cast<PerryZExtExpr>(PE);
+      const PerryExpr *src_p = ZE->src.get();
       auto src = toZ3Expr(ZE->src.get());
-      return z3::zext(src, ZE->getWidth() - ZE->src->getWidth());
+      if (src_p->getWidth() == Expr::Bool) {
+        return z3::ite(src, ctx.bv_val(1, ZE->width), ctx.bv_val(0, ZE->width));
+      } else {
+        return z3::zext(src, ZE->getWidth() - ZE->src->getWidth());
+      }
     }
     case Expr::SExt: {
       const PerrySExtExpr *SE = cast<PerrySExtExpr>(PE);
+      const PerryExpr *src_p = SE->src.get();
       auto src = toZ3Expr(SE->src.get());
-      return z3::sext(src, SE->getWidth() - SE->src->getWidth());
+      if (src_p->getWidth() == Expr::Bool) {
+        return z3::ite(src, ctx.bv_val(-1, SE->width), ctx.bv_val(0, SE->width));
+      } else {
+        return z3::sext(src, SE->getWidth() - SE->src->getWidth());
+      }
     }
     case Expr::Not: {
       const PerryNotExpr *NE = cast<PerryNotExpr>(PE);
