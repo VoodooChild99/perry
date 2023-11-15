@@ -5,6 +5,7 @@
 #include "llvm/Support/YAMLTraits.h"
 
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 struct PerryLoopItem {
@@ -89,7 +90,7 @@ struct llvm::yaml::SequenceTraits<std::vector<PerryLoopItem>> {
   }
 };
 
-using LoopRangeTy = std::map<std::string, std::vector<PerryLoopItemLoc>>;
+using LoopRangeTy = std::unordered_map<std::string, std::vector<PerryLoopItemLoc>>;
 
 void loadLoopInfo(LoopRangeTy &info);
 

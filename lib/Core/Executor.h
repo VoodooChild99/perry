@@ -218,9 +218,9 @@ private:
 
   std::vector<PerryRecord> perryRecords;
   PerryExprManager &perryExprManager;
-  const std::set<llvm::BasicBlock*> &loopExitingBlocks;
+  const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks;
   LoopRangeTy &loopRanges;
-  const std::set<std::string> &FunctionHooks;
+  const std::unordered_set<std::string> &FunctionHooks;
   // std::vector<PerryTrace> RegAccessTrace;
   // std::vector<std::pair<bool, PerryTrace::Constraints>> finalConditions;
   // std::vector<uint64_t> returnValues;
@@ -507,8 +507,8 @@ private:
 public:
   Executor(llvm::LLVMContext &ctx, const InterpreterOptions &opts,
       InterpreterHandler *ie, PerryExprManager &_perryExprManager,
-      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-      LoopRangeTy &loopRange, const std::set<std::string> &FunctionHooks);
+      const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
+      LoopRangeTy &loopRange, const std::unordered_set<std::string> &FunctionHooks);
   virtual ~Executor();
 
   const InterpreterHandler& getHandler() {
@@ -594,7 +594,7 @@ public:
   int isLoopHeader(llvm::Instruction *inst);
   void addCheckPoint(ExecutionState &state, const ref<Expr> &condition, llvm::MDNode *BI);
   static const int PERRY_PATH_TERMINATE_THRESHOLD = 2;
-  static const std::set<std::string> whitelist;
+  static const std::unordered_set<std::string> whitelist;
 };
   
 } // End klee namespace

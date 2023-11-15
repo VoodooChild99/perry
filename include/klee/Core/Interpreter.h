@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -70,7 +71,7 @@ public:
     bool CheckOvershift;
     std::set<std::string> TopLevelFunctions;
     std::map<StructOffset, std::set<std::string>> PtrFunction;
-    std::map<std::string, std::set<uint64_t>> OkValuesMap;
+    std::map<std::string, std::unordered_set<uint64_t>> OkValuesMap;
 
     ModuleOptions(const std::string &_LibraryDir,
                   const std::string &_EntryPoint, const std::string &_OptSuffix,
@@ -131,9 +132,9 @@ public:
                              const InterpreterOptions &_interpreterOpts,
                              InterpreterHandler *ih,
                              PerryExprManager &_perryExprManager,
-      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+      const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
       LoopRangeTy &loopRange,
-      const std::set<std::string> &FunctionHooks);
+      const std::unordered_set<std::string> &FunctionHooks);
 
   /// Register the module to be executed.
   /// \param modules A list of modules that should form the final

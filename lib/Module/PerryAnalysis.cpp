@@ -319,7 +319,7 @@ bool PerryAnalysisPass::runOnModule(Module &M) {
       if (!CT) {
         continue;
       }
-      std::set<uint64_t> OkValues;
+      std::unordered_set<uint64_t> OkValues;
       for (auto Node : CT->getElements()) {
         assert(isa<DIEnumerator>(Node));
         auto DIE = cast<DIEnumerator>(Node);

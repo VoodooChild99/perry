@@ -26,6 +26,7 @@
 #include "klee/Perry/PerryTrace.h"
 
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -50,8 +51,8 @@ struct StackFrame {
 
   std::vector<const MemoryObject *> allocas;
   Cell *locals;
-  std::map<llvm::MDNode *, PerryCheckPointInternal> checkpoints;
-  std::map<llvm::BasicBlock *, int> paths;
+  std::unordered_map<llvm::MDNode *, PerryCheckPointInternal> checkpoints;
+  std::unordered_map<llvm::BasicBlock *, int> paths;
 
   /// Minimum distance to an uncovered instruction once the function
   /// returns. This is not a good place for this but is used to

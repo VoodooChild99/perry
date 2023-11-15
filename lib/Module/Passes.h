@@ -238,7 +238,7 @@ public:
   FuncSymbolizePass(const std::set<std::string> &_TopLevelFunctions,
                     std::map<std::string, std::string> *_FunctionToSymbolName,
             const std::map<StructOffset, std::set<std::string>> &_PtrFunction,
-            const std::map<std::string, std::set<uint64_t>> &_OkValuesMap) :
+            const std::map<std::string, std::unordered_set<uint64_t>> &_OkValuesMap) :
     llvm::ModulePass(ID), TopLevelFunctions(_TopLevelFunctions),
     FunctionToSymbolName(_FunctionToSymbolName), PtrFunction(_PtrFunction),
     OkValuesMap(_OkValuesMap) {}
@@ -279,7 +279,7 @@ private:
   const std::set<std::string> &TopLevelFunctions;
   std::map<std::string, std::string> *FunctionToSymbolName;
   const std::map<StructOffset, std::set<std::string>> &PtrFunction;
-  const std::map<std::string, std::set<uint64_t>> &OkValuesMap;
+  const std::map<std::string, std::unordered_set<uint64_t>> &OkValuesMap;
   std::string PeripheralPlaceholder;
   const llvm::DataLayout *DL;
   llvm::LLVMContext *ctx;

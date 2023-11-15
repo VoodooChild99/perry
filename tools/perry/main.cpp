@@ -1253,7 +1253,7 @@ static void
 collectTopLevelFunctions(llvm::Module& MainModule,
                          std::set<std::string> &TopLevelFunctions,
                          std::map<StructOffset, std::set<std::string>> &PtrFunc,
-                         std::map<std::string, std::set<uint64_t>> &OkValuesMap)
+                         std::map<std::string, std::unordered_set<uint64_t>> &OkValuesMap)
 {
   // load api file
   bool doAutoAnalyzeApi = false;
@@ -1309,7 +1309,7 @@ collectTopLevelFunctions(llvm::Module& MainModule,
         for (auto &RI : ReadItem) {
           OkValuesMap.insert(
             std::make_pair(RI.FuncName,
-                             std::set<uint64_t>{RI.SuccVal}));
+                             std::unordered_set<uint64_t>{RI.SuccVal}));
         }
       }
     } else {
@@ -1386,9 +1386,9 @@ static void singlerun(std::vector<bool> &replayPath,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
-                      const std::set<llvm::BasicBlock *> &loopExitingBlocks,
+                      const std::unordered_set<llvm::BasicBlock *> &loopExitingBlocks,
                       LoopRangeTy &loopRange,
-                      const std::set<std::string> &FunctionHooks,
+                      const std::unordered_set<std::string> &FunctionHooks,
                       bool do_bind);
 
 static int workerPID;
@@ -1674,7 +1674,7 @@ static int inNestedScope(Instruction *a, Instruction *b) {
 int inLoopCondition(Instruction *inst, LoopRangeTy &LoopRanges) {
   // static LoopRangeTy _LookUpMap;
   using LoopUpCacheTy
-    = std::map<std::string, std::map<std::pair<unsigned, unsigned>, bool>>;
+    = std::unordered_map<std::string, std::map<std::pair<unsigned, unsigned>, bool>>;
   static LoopUpCacheTy LookUpCache;
 
   // LoopRangeTy &LookUpMap = LoopRanges.empty() ? _LookUpMap : LoopRanges;
@@ -2264,7 +2264,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             const std::map<std::string, std::string> &FunctionToSymbolName,
             const std::map<std::string, std::vector<PerryRecord>> &allRecords,
             const TaintSet &liveTaint,
-            const std::map<std::string, std::set<uint64_t>> &OkValuesMap,
+            const std::map<std::string, std::unordered_set<uint64_t>> &OkValuesMap,
             ControlDependenceGraphPass::NodeMap &nm,
             LoopRangeTy &LoopRanges)
 {
@@ -3958,7 +3958,7 @@ int main(int argc, char **argv) {
 
   std::set<std::string> TopLevelFunctions;
   std::map<StructOffset, std::set<std::string>> PtrFunction;
-  std::map<std::string, std::set<uint64_t>> OkValuesMap;
+  std::map<std::string, std::unordered_set<uint64_t>> OkValuesMap;
   LoopRangeTy LoopRanges;
   perry_eth_info = new PerryEthInfo();
   perry_timer_info = new PerryTimerInfo();
@@ -4076,7 +4076,7 @@ int main(int argc, char **argv) {
   ControlDependenceGraphPass::NodeSet ns;
   ControlDependenceGraphPass::NodeMap nm;
   kmodule->prepareCDG(TopLevelFunctions, ns, nm);
-  std::set<llvm::BasicBlock *> loopExitingBlocks;
+  std::unordered_set<llvm::BasicBlock *> loopExitingBlocks;
   kmodule->collectLoopExitingBlocks(loopExitingBlocks);
   externalsAndGlobalsCheck(kmodule->module.get());
 
@@ -4093,7 +4093,7 @@ int main(int argc, char **argv) {
   PerryExprManager PEM;
 
   bool do_bind = true;
-  std::set<std::string> perry_func_hooks;
+  std::unordered_set<std::string> perry_func_hooks;
   for (auto &fh : PerryFunctionHooks) {
     perry_func_hooks.insert(fh);
   }
@@ -4209,9 +4209,9 @@ static void runKlee(std::vector<bool> &replayPath,
                     int fd,
                     std::vector<PerryRecord> &records,
                     PerryExprManager &PEM,
-                    const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                    const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
                     LoopRangeTy &loopRange,
-                    const std::set<std::string> &FunctionHooks,
+                    const std::unordered_set<std::string> &FunctionHooks,
                     bool do_bind)
 {
   KleeHandler *handler = new KleeHandler(0, nullptr);
@@ -4369,9 +4369,9 @@ static void singlerun(std::vector<bool> &replayPath,
                       TaintSet &ts,
                       std::vector<PerryRecord> &records,
                       PerryExprManager &PEM,
-                      const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                      const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
                       LoopRangeTy &loopRange,
-                      const std::set<std::string> &FunctionHooks,
+                      const std::unordered_set<std::string> &FunctionHooks,
                       bool do_bind)
 {
 

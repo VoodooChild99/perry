@@ -163,7 +163,7 @@ namespace klee {
                     ControlDependenceGraphPass::NodeSet &_nodeSet,
                     ControlDependenceGraphPass::NodeMap &_nodeMap);
     void collectLoopExitingBlocks(
-      std::set<llvm::BasicBlock*> &loopExitingBlocks);
+      std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks);
     
     /// Same as manifest(), but without output
     void manifestNoOutput();

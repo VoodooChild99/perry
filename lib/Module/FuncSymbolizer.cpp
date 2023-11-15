@@ -77,7 +77,7 @@ enum DataType {
   STRUCT,
 };
 
-static const std::set<std::string> dma_keywords = {
+static const std::unordered_set<std::string> dma_keywords = {
   "DMA",
 };
 
@@ -210,7 +210,7 @@ symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
 void FuncSymbolizePass::
 symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
   // filter out UBSAN globals
-  std::set<GlobalVariable*> UBSanGlobals;
+  std::unordered_set<GlobalVariable*> UBSanGlobals;
   unsigned num_ubsan_globals = 0;
   while (true) {
     for (auto &G : M.globals()) {
@@ -902,7 +902,7 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
   Value *Zero = IRB.getInt32(0);
   // collect used function ptrs on all called functions
   CallGraph &MCG = *CG;
-  std::set<Function*> calledFuncs;
+  std::unordered_set<Function*> calledFuncs;
   std::vector<Function*> FWL;
   FWL.push_back(TargetF);
   while (!FWL.empty()) {
@@ -977,7 +977,7 @@ void FuncSymbolizePass::prepFunctionPtr(Module &M, Function *TargetF,
       continue;
     }
     WL.push_back(US.first);
-    std::set<BasicBlock*> visited;
+    std::unordered_set<BasicBlock*> visited;
     while (!WL.empty()) {
       auto BB =  WL.front();
       WL.pop_front();
@@ -1431,23 +1431,23 @@ applyDataHeuristic(IRBuilder<> &IRB, std::vector<ParamCell*> &results,
   }
 }
 
-static const std::set<std::string> eth_keywords = {
+static const std::unordered_set<std::string> eth_keywords = {
   "enet", "eth"
 };
 
-static const std::set<std::string> function_sigs = {
+static const std::unordered_set<std::string> function_sigs = {
   "ENET_", "HAL_ETH_"
 };
 
-static const std::set<std::string> desc_struct_names = {
+static const std::unordered_set<std::string> desc_struct_names = {
   "ETH_DMADescTypeDef", "enet_rx_bd_struct", "enet_tx_bd_struct"
 };
 
-static const std::set<std::string> rx_desc_struct_names = {
+static const std::unordered_set<std::string> rx_desc_struct_names = {
   "ETH_DMADescTypeDef", "enet_rx_bd_struct"
 };
 
-static const std::set<std::string> tx_desc_struct_names = {
+static const std::unordered_set<std::string> tx_desc_struct_names = {
   "ETH_DMADescTypeDef", "enet_tx_bd_struct"
 };
 
@@ -1506,7 +1506,7 @@ bool FuncSymbolizePass::isEthernetPeriph(StringRef name) {
 
 void FuncSymbolizePass::analyzeDescRegs(Module &M) {
   std::stack<Function *>candidate_funcs;
-  std::set<Function *>analyzed_funcs;
+  std::unordered_set<Function *>analyzed_funcs;
   std::set<int> desc_reg_offsets;
   const DataLayout &DL = M.getDataLayout();
   for (auto &F : TopLevelFunctions) {
@@ -1604,7 +1604,7 @@ void FuncSymbolizePass::analyzeDescRegs(Module &M) {
 }
 
 // is `SI` storing into structures in `TS`
-static bool isStoreTargetStruct(StoreInst *SI, const std::set<std::string> &TS) {
+static bool isStoreTargetStruct(StoreInst *SI, const std::unordered_set<std::string> &TS) {
   Value *ptr = SI->getPointerOperand();
   GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(ptr);
   if (!GEPI) {
@@ -1627,7 +1627,7 @@ static bool isStoreTargetStruct(StoreInst *SI, const std::set<std::string> &TS) 
 }
 
 // is `LI` load from structures in `TS`
-static bool isLoadTargetStruct(LoadInst *LI, const std::set<std::string> &TS) {
+static bool isLoadTargetStruct(LoadInst *LI, const std::unordered_set<std::string> &TS) {
   Value *ptr = LI->getPointerOperand();
   GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(ptr);
   if (!GEPI) {
@@ -1650,7 +1650,7 @@ static bool isLoadTargetStruct(LoadInst *LI, const std::set<std::string> &TS) {
 }
 
 // is `LI` load from structures in `TS`
-static bool isLoadTargetStruct(LoadInst *LI, const std::set<std::string> &TS,
+static bool isLoadTargetStruct(LoadInst *LI, const std::unordered_set<std::string> &TS,
                                const DataLayout &DL, int &load_idx) {
   Value *ptr = LI->getPointerOperand();
   GetElementPtrInst *GEPI = dyn_cast<GetElementPtrInst>(ptr);
@@ -1950,7 +1950,7 @@ void FuncSymbolizePass::analyzeDescRxBufferLen(llvm::Module &M) {
   if (RxFrameLen == TxBufLen) {
     // register
     std::stack<Function *>candidate_funcs;
-    std::set<Function *>analyzed_funcs;
+    std::unordered_set<Function *>analyzed_funcs;
     for (auto &F : TopLevelFunctions) {
       Function *TF = M.getFunction(F);
       if (TF) {
@@ -2287,7 +2287,7 @@ void FuncSymbolizePass::analyzeDescMemLayout(llvm::Module &M) {
 
 // collect continuous blocks until a conditional branch or return
 static void collectContinuousBlocks(llvm::BasicBlock *start,
-                                    std::set<llvm::BasicBlock *> &res) {
+                                    std::unordered_set<llvm::BasicBlock *> &res) {
   BasicBlock *cur = start;
   while (true) {
     res.insert(cur);
@@ -2312,7 +2312,7 @@ static void collectContinuousBlocks(llvm::BasicBlock *start,
 void FuncSymbolizePass::analyzeDescConstraints(llvm::Module &M) {
   // in rx funcs, the out-most descriptor-related constraints
   const DataLayout &DL = M.getDataLayout();
-  std::set<BasicBlock *> first_seg_bbs;
+  std::unordered_set<BasicBlock *> first_seg_bbs;
   for (auto &F : M) {
     for (auto &RF : frame_rx_funcs) {
       if (!F.getName().equals(RF.name)) {
@@ -2322,7 +2322,7 @@ void FuncSymbolizePass::analyzeDescConstraints(llvm::Module &M) {
         continue;
       }
       DominatorTree DT(F);
-      std::set<BasicBlock *> dominators;
+      std::unordered_set<BasicBlock *> dominators;
 
       std::vector<std::pair<LoadInst *, int>> load_insts;
       for (auto &B : F) {
@@ -2452,7 +2452,7 @@ void FuncSymbolizePass::analyzeDescConstraints(llvm::Module &M) {
             break;
           }
           // save as Available Constraints
-          std::set<BasicBlock *> tmp;
+          std::unordered_set<BasicBlock *> tmp;
           collectContinuousBlocks(BI->getSuccessor(0), tmp);
           bool should_be_true = false;
           for (auto ppp : load_insts) {
@@ -2542,7 +2542,7 @@ void FuncSymbolizePass::analyzeDescConstraints(llvm::Module &M) {
   }
 }
 
-static const std::set<std::string> tim_keywords = {
+static const std::unordered_set<std::string> tim_keywords = {
   "TIM", "LPTIM", "FTM", "LPTMR", "PIT"
 };
 
@@ -2594,7 +2594,7 @@ void FuncSymbolizePass::analyzeTimerPeriodReg(llvm::Module &M) {
       if (!F.getName().equals(sf.fname)) {
         continue;
       }
-      std::set<Value *> src_ops;
+      std::unordered_set<Value *> src_ops;
       if (sf.ty == STRUCT) {
         for (auto &B : F) {
           for (auto &I : B) {
@@ -2666,7 +2666,7 @@ void FuncSymbolizePass::analyzeTimerCounterReg(llvm::Module &M) {
       if (!F.getName().equals(sf.fname)) {
         continue;
       }
-      std::set<Value *> src_ops;
+      std::unordered_set<Value *> src_ops;
       if (sf.ty == STRUCT) {
         for (auto &B : F) {
           for (auto &I : B) {

@@ -93,6 +93,7 @@ typedef unsigned TypeSize;
 #include <string>
 #include <sys/mman.h>
 #include <vector>
+#include <unordered_set>
 
 using namespace llvm;
 using namespace klee;
@@ -470,8 +471,8 @@ unsigned dumpStates = 0, dumpPTree = 0;
 
 Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
                    InterpreterHandler *ih, PerryExprManager &_perryExprManager,
-                   const std::set<llvm::BasicBlock*> &loopExitingBlocks,
-                   LoopRangeTy &loopRanges, const std::set<std::string> &FunctionHooks)
+                   const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
+                   LoopRangeTy &loopRanges, const std::unordered_set<std::string> &FunctionHooks)
     : Interpreter(opts), interpreterHandler(ih), searcher(0),
       externalDispatcher(new ExternalDispatcher(ctx)), statsTracker(0),
       pathWriter(0), symPathWriter(0), specialFunctionHandler(0), timers{time::Span(TimerInterval)},
@@ -1095,7 +1096,7 @@ ref<Expr> Executor::maxStaticPctChecks(ExecutionState &current,
   return condition;
 }
 
-const std::set<std::string> Executor::whitelist {
+const std::unordered_set<std::string> Executor::whitelist {
   "memcpy", "memset", "memcmp"
 };
 
@@ -5978,8 +5979,8 @@ void Executor::dumpStates() {
 Interpreter *Interpreter::create(LLVMContext &ctx, const InterpreterOptions &opts,
                                  InterpreterHandler *ih,
                                  PerryExprManager &_perryExprManager,
-                        const std::set<llvm::BasicBlock*> &loopExitingBlocks,
+                        const std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks,
                         LoopRangeTy &loopRange,
-                        const std::set<std::string> &FunctionHooks) {
+                        const std::unordered_set<std::string> &FunctionHooks) {
   return new Executor(ctx, opts, ih, _perryExprManager, loopExitingBlocks, loopRange, FunctionHooks);
 }

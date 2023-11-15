@@ -379,7 +379,7 @@ void KModule::prepareCDG(const std::set<std::string> &_TopLevelFunctions,
 }
 
 void KModule::
-collectLoopExitingBlocks(std::set<BasicBlock *> &loopExitingBlocks) {
+collectLoopExitingBlocks(std::unordered_set<BasicBlock *> &loopExitingBlocks) {
   legacy::PassManager pm;
   pm.add(new CollectLoopExitingPass(loopExitingBlocks));
   pm.run(*module);

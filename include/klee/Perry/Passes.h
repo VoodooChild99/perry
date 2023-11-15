@@ -11,6 +11,7 @@
 
 #include <vector>
 #include <set>
+#include <unordered_set>
 #include <map>
 
 namespace klee {
@@ -40,7 +41,7 @@ public:
   PerryAnalysisPass(
     std::set<std::string> &_TopLevelFunction,
     std::map<StructOffset, std::set<std::string>> &_PtrFunction,
-    std::map<std::string, std::set<uint64_t>> &_OkValuesMap,
+    std::map<std::string, std::unordered_set<uint64_t>> &_OkValuesMap,
     bool doAutoAnalyzeApi = false,
     bool doAutoAnalyzeEnum = false)
     : llvm::ModulePass(ID),
@@ -52,7 +53,7 @@ public:
 private:
   std::set<std::string> &TopLevelFunction;
   std::map<StructOffset, std::set<std::string>> &PtrFunction;
-  std::map<std::string, std::set<uint64_t>> &OkValuesMap;
+  std::map<std::string, std::unordered_set<uint64_t>> &OkValuesMap;
   bool doAutoAnalyzeApi;
   bool doAutoAnalyzeEnum;
 };
@@ -144,12 +145,12 @@ private:
 class CollectLoopExitingPass : public llvm::ModulePass {
 public:
   static char ID;
-  CollectLoopExitingPass(std::set<llvm::BasicBlock*> &M)
+  CollectLoopExitingPass(std::unordered_set<llvm::BasicBlock*> &M)
     : llvm::ModulePass(ID), loopExitingBlocks(M) {}
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
 private:
-  std::set<llvm::BasicBlock*> &loopExitingBlocks;
+  std::unordered_set<llvm::BasicBlock*> &loopExitingBlocks;
   void handleLoop(llvm::Loop *L);
 };
 
