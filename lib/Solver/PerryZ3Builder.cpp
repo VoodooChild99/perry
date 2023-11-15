@@ -342,14 +342,26 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
     return original;
   }
 
-  s1.add(original);
-  s2.add(!original);
+  s1.add(!original);
+  s2.add(original);
   s2.set("core.minimize", true);
 
   z3::expr_vector clauses(ctx);
+  if (s1.check() == z3::unsat) {
+    // original must be true
+    return ctx.bool_val(true);
+  }
+  if (s2.check() == z3::unsat) {
+    // original must be false
+    return ctx.bool_val(false);
+  }
   while (s1.check() == z3::sat) {
     z3::model mdl = s1.get_model();
     unsigned num_const = mdl.num_consts();
+    if (num_const == 0) {
+      // s1 is always true
+      break;
+    }
     z3::expr_vector core(ctx);
     z3::expr_vector clause(ctx);
     for (unsigned i = 0; i < num_const; ++i) {
@@ -378,11 +390,12 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
     }
   }
   if (clauses.size() == 0) {
-    klee_error("Error when simplify logical expressions: the size of the final clause is 0");
+    // if we ever get here, s1 must be true, which means original must be false
+    return ctx.bool_val(false);
   } else if (clauses.size() > 1) {
-    return !z3::mk_and(clauses);
+    return z3::mk_and(clauses);
   } else {
-    return !clauses[0];
+    return clauses[0];
   }
   
 }
