@@ -2947,6 +2947,8 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
                                      IRBM.getVoidTy(),
                                      IRBM.getInt32Ty(),
                                      IRBM.getInt32Ty());
+  AssertFC = M.getOrInsertFunction("klee_custom_assert",
+                                   IRBM.getVoidTy());
   FunctionType *general_hook_fn_ty = FunctionType::get(
     IRBM.getVoidTy(), {IRBM.getInt32Ty()}, true);
   GeneralHookFC = M.getOrInsertFunction("perry_klee_hook", general_hook_fn_ty);

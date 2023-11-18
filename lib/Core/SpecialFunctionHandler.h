@@ -160,6 +160,7 @@ namespace klee {
     HANDLER(handleGetReturnValue);
     HANDLER(handleAssertFunc);
     HANDLER(handleOOB);
+    HANDLER(handleCustomAssert);
     HANDLER(handlePerryCustomHook);
     HANDLER(handlePerryCustomHookWrapper);
 #undef HANDLER

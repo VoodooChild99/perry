@@ -290,6 +290,7 @@ private:
   llvm::FunctionCallee GetTaintFC;
   llvm::FunctionCallee GetRetValFC;
   llvm::FunctionCallee AllocFixFC;
+  llvm::FunctionCallee AssertFC;
   llvm::FunctionCallee GeneralHookFC;
   llvm::FunctionCallee GeneralHookWrapperFC;
   std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;

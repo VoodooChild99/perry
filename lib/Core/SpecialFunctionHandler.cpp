@@ -157,6 +157,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_get_return_value", handleGetReturnValue, false),
   add("__assert_func", handleAssertFunc, false),
   add("__ubsan_handle_out_of_bounds", handleOOB, false),
+  addDNR("klee_custom_assert", handleCustomAssert),
   addDNR("perry_klee_hook", handlePerryCustomHook),
   addDNR("perry_klee_hook_wrapper", handlePerryCustomHookWrapper),
 
@@ -1334,6 +1335,15 @@ handleOOB(ExecutionState &state, KInstruction *target,
   executor.terminateStateOnError(state, "Array OOB access",
                                  StateTerminationType::Assert);
 }
+
+void SpecialFunctionHandler::
+handleCustomAssert(ExecutionState &state,
+                   KInstruction *target, std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(
+      state, "custom assertion failed (for enum)",
+      StateTerminationType::Assert);
+}
+
 const std::vector<PerryCustomHook> PerryCustomHook::perry_custom_hooks = {
   PerryCustomHook(PERRY_DMA_XFER_CPLT_HOOK, 0),
   PerryCustomHook(PERRY_GENERAL_HOOK, 1),

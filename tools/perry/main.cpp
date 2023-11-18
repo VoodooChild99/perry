@@ -864,6 +864,7 @@ static const char *modelledExternals[] = {
   "__ubsan_handle_mul_overflow",
   "__ubsan_handle_divrem_overflow",
   "__ubsan_handle_out_of_bounds",
+  "klee_custom_assert",
   "perry_klee_hook",
   "perry_klee_hook_wrapper",
 };
