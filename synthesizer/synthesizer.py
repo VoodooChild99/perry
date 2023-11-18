@@ -1726,8 +1726,6 @@ static void {0}({1} *{2}, int channel_idx, int level) {{
         self.struct_name,
         self.periph_instance_name)
       return body
-    if not self.has_data_reg:
-      return ''
     if self.irq_constraint is None:
       return ''
     body = \
