@@ -1455,6 +1455,8 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
   }
 }
 
+#define DEBUG_OUTPUT_EXPR
+
 z3::expr PerryZ3Builder::
 getLogicalBitExpr(const z3::expr &src, const std::string &SymName,
                   bool simplify_not, bool preserve_all,
@@ -1467,30 +1469,50 @@ getLogicalBitExpr(const z3::expr &src, const std::string &SymName,
   std::map<unsigned, unsigned> bv_id_to_idx;
   std::map<unsigned, unsigned> bool_id_to_idx;
   unsigned cnt = 0;
-  // std::cerr << src << "\n0000000000000000000\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Initial expr:\n" << src.to_string()
+            << "\n-------------------\n";
+#endif
   auto naive = src.simplify();
-  // std::cerr << naive << "\n11111111111111111\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "After builtin simplification:\n" << naive.to_string()
+            << "\n-------------------\n";
+#endif
   visitLogicBitLevel(
     naive, res, orig, bool_vars, bv_id_to_idx, bool_id_to_idx, cnt);
   assert(res.size() == 1);
-  // std::cerr << res[0] << "\n22222222222222222222\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Transform into bit-level expr:\n" << res[0].to_string()
+            << "\n-------------------\n";
+#endif
   auto logic_expr = res[0].simplify();
-  // std::cerr << logic_expr << "\n33333333333333333333\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Bit-level expr after builtin simplification:\n"
+            << logic_expr.to_string() << "\n-------------------\n";
+#endif
   logic_expr = simplifyLogicExpr(logic_expr);
-  // std::cerr << logic_expr << "\n4444444444444444444\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Simplified bit-level expr:\n" << logic_expr.to_string()
+            << "\n-------------------\n";
+#endif
   logic_expr = logic_expr.simplify();
-  // std::cerr << logic_expr << "\n555555555555555555\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Builtin-simplified simplified bit-level expr:\n"
+            << logic_expr.to_string() << "\n-------------------\n";
+#endif
   auto ret = reconstructExpr(
     logic_expr, orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
-  // std::cerr << ret << "\n666666666666666666666666\n";
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Expr after reconstruction:\n"
+            << ret.to_string() << "\n-------------------\n";
+#endif
   assert(ret.size() <= 1);
-  if (ret.size() == 1) {
-    auto result = ret[0].simplify();
-    return result;
-  } else {
-    auto result = ctx.bool_val(true);
-    return result;
-  }
+  auto result = ret.size() == 1 ? ret[0].simplify() : ctx.bool_val(true);
+#ifdef DEBUG_OUTPUT_EXPR
+  std::cerr << "Result:\n"
+            << result.to_string() << "\n############################\n";
+#endif
+  return result;
 }
 
 z3::expr PerryZ3Builder::
