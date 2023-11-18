@@ -371,6 +371,7 @@ class Synthesizer:
       self.time_scale = y['time-scale']
     else:
       self.time_scale = None
+    self.data_reg_periph = set()
 
 
 
@@ -2754,6 +2755,10 @@ static void {0}(MachineState *machine) {{
           content += '\tobject_initialize_child(OBJECT(sms), \"{}\", {}, {});\n'.format(
             i, ptr_name, periph_type_def
           )
+        if bp_kind in self.data_reg_periph:
+          content += '\tqdev_prop_set_chr(DEVICE({0}), "chardev", qemu_chr_new("soc-{1}", "chardev:{1}", NULL));\n'.format(
+            ptr_name, i.lower()
+          )
         if is_eth:
           content += '\tqdev_set_nic_properties(DEVICE({}), &nd_table[0]);\n'.format(ptr_name)
         content += '\tsysbus_realize(SYS_BUS_DEVICE({}), &error_fatal);\n'.format(ptr_name)
@@ -3127,6 +3132,9 @@ type_init({0});
       if use_perry and run_perry:
         self.__run_perry(p)
       self.__setup_peripheral_ctx(p_target, p_name, p_constraint_file)
+      if self.has_data_reg:
+        the_name = p_target if p_name is None else p_name
+        self.data_reg_periph.add(the_name)
       hd = self._gen_header()
       src = self._gen_source()
       self.peripheral_results[p_target] = (self.symbol_name, hd, src)
