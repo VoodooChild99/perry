@@ -1539,7 +1539,7 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
     if self.dma_rx_enable_conds is not None:
       content += \
 """
-\tif ({0}) {{
+\tif ({0} && {2}->dma) {{
 \t\t{1}({2}->dma, {2}->base + {3}, *buf);
 \t}}
 """.format(
@@ -2312,7 +2312,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
       else:
         content += '\t\tcase A_{}:\n'.format(r.name)
-      if r.address_offset in self.data_related_reg_offset:
+      if r.address_offset in self.data_related_reg_offset and not r.name.startswith("CR"):
         # these registers as considered as status registers, as a result,
         # bits of these registers should only be set by hardware
         content += '\t\t\t{}->{} &= value;\n'.format(
@@ -2543,6 +2543,8 @@ static void {0}(DeviceState *dev, Error **errp) {{
         self.struct_name, self.periph_instance_name, self.full_name_upper)
       content += '\t{0}->timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}, {0});\n'.format(
         self.periph_instance_name, time_scale.upper(), self.timer_callback_func_name)
+    elif self.dma_rx_enable_conds is not None:
+      content += '\t{0}->dma = NULL;\n'.format(self.periph_instance_name)
     else:
       content += '\treturn;\n'
     body = body.format(self.realize_func_name, content)
