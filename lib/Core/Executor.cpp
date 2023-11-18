@@ -1358,7 +1358,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (res==Solver::True) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (isLoopHeader(BI)) {
+      if (isLoopHeader(BI) || isExitingBlock(BI->getParent())) {
         auto &checkpoints = current.stack.back().checkpoints;
         if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(0))) {
           if (reg_related) {
@@ -1416,7 +1416,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   } else if (res==Solver::False) {
     if (isa<BranchInst>(current.prevPC->inst)) {
       BranchInst *BI = cast<BranchInst>(current.prevPC->inst);
-      if (isLoopHeader(BI)) {
+      if (isLoopHeader(BI) || isExitingBlock(BI->getParent())) {
         auto &checkpoints = current.stack.back().checkpoints;
         if (shouldTerminatePath(current, BI->getParent(), BI->getSuccessor(1))) {
           if (reg_related) {
