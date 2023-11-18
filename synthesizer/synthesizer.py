@@ -21,6 +21,13 @@ from parse import parse
 
 DEFAULT_TIME_SCALE = 'us'
 
+PERIPH_HOOKS = [
+  (["TIM"], ["HAL_TIM_PeriodElapsedCallback"]),
+  (["USART", "UART"], ["HAL_UARTEx_RxEventCallback", "UART_EndTransmit_IT"]),
+  (["ADC"], ["HAL_ADC_ConvCpltCallback", "HAL_ADCEx_InjectedConvCpltCallback", "HAL_ADC_LevelOutOfWindowCallback"]),
+  (["EXTI"], ["HAL_GPIO_EXTI_Callback"]),
+]
+
 TIMER_HOOKS = [
   "HAL_TIM_PeriodElapsedCallback"
 ]
@@ -3026,13 +3033,11 @@ type_init({0});
       if bc != target_bc:
         addon_cmd.append("--link-llvm-lib={}".format(bc))
     
-    if target.startswith('TIM'):
-      for hk in TIMER_HOOKS:
-        addon_cmd.append("--perry-function-hook={}".format(hk))
-    
-    if target.startswith('USART') or target.startswith('UART'):
-      for hk in UART_HOOKS:
-        addon_cmd.append("--perry-function-hook={}".format(hk))
+    for hk_pair in PERIPH_HOOKS:
+      for periph_prefix in hk_pair[0]:
+        if target.startswith(periph_prefix):
+          for hk in hk_pair[1]:
+            addon_cmd.append("--perry-function-hook={}".format(hk))
 
     addon_cmd.append(target_bc)
     subprocess.run(self.perry_common_cmd + addon_cmd, stdout=sys.stdout)
