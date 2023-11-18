@@ -57,6 +57,12 @@ namespace {
     cl::desc("A list of sizes of other peripherals"),
     cl::cat(MiscCat)
   );
+  cl::opt<bool> DefaultFptrBeNull(
+    "default-fptr-be-null",
+    cl::desc("A list of sizes of other peripherals"),
+    cl::init(false),
+    cl::cat(MiscCat)
+  );
 }
 
 static std::vector<std::string> null_ptr_structs = {
@@ -187,6 +193,16 @@ FuncSymbolizePass::ParamCell::~ParamCell() {
     parent = nullptr;
   }
 }
+
+Value *FuncSymbolizePass::createDefaultFptr(IRBuilder<> &IRB,
+                                            PointerType *fptr_ty) {
+  if (DefaultFptrBeNull) {
+    return ConstantPointerNull::get(fptr_ty);
+  } else {
+    return IRB.CreateBitCast(GeneralHookWrapperFC.getCallee(), fptr_ty);
+  }
+}
+
 
 void FuncSymbolizePass::
 symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
@@ -1189,8 +1205,7 @@ fillCellInner(llvm::IRBuilder<> &IRB, ParamCell *root) {
       } else {
         if (Child->ParamType->isFunctionTy()) {
           assert(Child->depth == 1);
-          FinalValue 
-            = ConstantPointerNull::get(Child->ParamType->getPointerTo());
+          FinalValue = createDefaultFptr(IRB, Child->ParamType->getPointerTo());
         }
       }
       if (!FinalValue) {
@@ -1250,7 +1265,7 @@ void FuncSymbolizePass::callTarget(Function *TargetF, IRBuilder<> &IRB,
     if (!root->val) {
       assert(root->ParamType->isFunctionTy() && root->depth == 1);
       RealParams.push_back(
-        ConstantPointerNull::get(root->ParamType->getPointerTo()));
+        createDefaultFptr(IRB, root->ParamType->getPointerTo()));
       continue;
     }
     if (root->depth == 0) {
@@ -1306,7 +1321,7 @@ void FuncSymbolizePass::callTarget(Function *TargetF, IRBuilder<> &IRB,
             if (!PC->val) {
               assert(PC->ParamType->isFunctionTy() && PC->depth == 1);
               dma_init_params.push_back(
-                ConstantPointerNull::get(PC->ParamType->getPointerTo()));
+                createDefaultFptr(IRB, PC->ParamType->getPointerTo()));
             } else if (PC->depth == 0) {
               dma_init_params.push_back(IRB.CreateLoad(PC->ParamType, PC->val));
             } else {
@@ -1323,7 +1338,7 @@ void FuncSymbolizePass::callTarget(Function *TargetF, IRBuilder<> &IRB,
           } else {
             assert(PC->ParamType->isFunctionTy() && PC->depth == 1);
             dma_init_params.push_back(
-              ConstantPointerNull::get(PC->ParamType->getPointerTo()));
+              createDefaultFptr(IRB, PC->ParamType->getPointerTo()));
           }
         }
         ++idx;
@@ -2783,6 +2798,12 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
                                      IRBM.getVoidTy(),
                                      IRBM.getInt32Ty(),
                                      IRBM.getInt32Ty());
+  FunctionType *general_hook_fn_ty = FunctionType::get(
+    IRBM.getVoidTy(), {IRBM.getInt32Ty()}, true);
+  GeneralHookFC = M.getOrInsertFunction("perry_klee_hook", general_hook_fn_ty);
+  GeneralHookWrapperFC = M.getOrInsertFunction("perry_klee_hook_wrapper",
+                                               IRBM.getVoidTy());
+  
   for (auto &DF : dma_init_func) {
     Function *F = M.getFunction(DF);
     if (!F) {

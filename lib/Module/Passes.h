@@ -289,6 +289,8 @@ private:
   llvm::FunctionCallee GetTaintFC;
   llvm::FunctionCallee GetRetValFC;
   llvm::FunctionCallee AllocFixFC;
+  llvm::FunctionCallee GeneralHookFC;
+  llvm::FunctionCallee GeneralHookWrapperFC;
   std::vector<std::pair<llvm::Value*, int>> GuessedBuffers;
   std::pair<llvm::Value*, int> fRetVal;
   llvm::CallGraph *CG = nullptr;
@@ -304,6 +306,8 @@ private:
   llvm::Function *ParamF = nullptr;
   llvm::FunctionCallee DMAInitFC;
 
+  llvm::Value *createDefaultFptr(llvm::IRBuilder<> &IRB,
+                                 llvm::PointerType *fptr_ty);
   bool isEthernetPeriph(llvm::StringRef name);
   bool isDMAPeriph(llvm::StringRef name);
   void analyzeDescRegs(llvm::Module &M);

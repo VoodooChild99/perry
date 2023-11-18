@@ -158,6 +158,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("__assert_func", handleAssertFunc, false),
   add("__ubsan_handle_out_of_bounds", handleOOB, false),
   addDNR("perry_klee_hook", handlePerryCustomHook),
+  addDNR("perry_klee_hook_wrapper", handlePerryCustomHookWrapper),
 
 #undef addDNR
 #undef add
@@ -1381,4 +1382,13 @@ handlePerryCustomHook(ExecutionState &state,
       return;
     }
   }
+}
+
+void SpecialFunctionHandler::
+handlePerryCustomHookWrapper(ExecutionState &state,
+                             KInstruction *target,
+                             std::vector<ref<Expr>> &arguments) {
+  std::vector<ref<Expr>> new_args;
+  new_args.push_back(ConstantExpr::alloc(1, 32));
+  handlePerryCustomHook(state, target, new_args);
 }
