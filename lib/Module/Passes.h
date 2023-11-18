@@ -275,6 +275,7 @@ private:
     int idx = -1;
     bool isBuffer = false;
     ~ParamCell();
+    bool allocated() const;
   };
   const std::set<std::string> &TopLevelFunctions;
   std::map<std::string, std::string> *FunctionToSymbolName;
@@ -305,9 +306,13 @@ private:
   bool TargetIsDMA = false;
   llvm::Function *ParamF = nullptr;
   llvm::FunctionCallee DMAInitFC;
+  std::unordered_set<llvm::Function *> GlovalVoidPtrArrayUserFn;
 
   llvm::Value *createDefaultFptr(llvm::IRBuilder<> &IRB,
                                  llvm::PointerType *fptr_ty);
+  void handleGlobalVoidPtrArray(llvm::IRBuilder<> &IRB,
+                                llvm::GlobalVariable &G,
+                                std::vector<llvm::Type *> &ty);
   bool isEthernetPeriph(llvm::StringRef name);
   bool isDMAPeriph(llvm::StringRef name);
   void analyzeDescRegs(llvm::Module &M);

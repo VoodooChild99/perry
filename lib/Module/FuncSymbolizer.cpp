@@ -19,6 +19,7 @@ using namespace llvm;
 using namespace klee;
 
 #define HEURISTIC_BUFFER_LENGTH   8
+#define RECURSIVE_TYPE_LENGTH     1
 
 char FuncSymbolizePass::ID = 0;
 
@@ -203,6 +204,10 @@ Value *FuncSymbolizePass::createDefaultFptr(IRBuilder<> &IRB,
   }
 }
 
+bool FuncSymbolizePass::ParamCell::allocated() const {
+  return ((parent && depth == 0) || val);
+}
+
 
 void FuncSymbolizePass::
 symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
@@ -221,6 +226,73 @@ symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
   ptrVarName = IRB.CreatePointerCast(ptrVarName, IRB.getInt8PtrTy());
   auto varSize = IRB.getInt32(Size);
   IRB.CreateCall(MakeSymbolicFC, {addr, varSize, ptrVarName});
+}
+
+void FuncSymbolizePass::handleGlobalVoidPtrArray(IRBuilder<> &IRB,
+                                                 GlobalVariable &G,
+                                                 std::vector<Type *> &ty) {
+  std::unordered_set<StructType *> possible_struct_types;
+  for (auto user : G.users()) {
+    if (auto gep = dyn_cast<GetElementPtrInst>(user)) {
+      for (auto u : gep->users()) {
+        if (auto ci = dyn_cast<BitCastInst>(u)) {
+          for (auto uu : ci->users()) {
+            if (auto si = dyn_cast<StoreInst>(uu)) {
+              auto ety = si->getValueOperand()->getType()->getPointerElementType();
+              if (ety->isStructTy()) {
+                possible_struct_types.insert(cast<StructType>(ety));
+              }
+            }
+          }
+        } else if (auto si = dyn_cast<StoreInst>(u)) {
+          if (auto sgep = dyn_cast<GetElementPtrInst>(si->getValueOperand())) {
+            auto ety = sgep->getSourceElementType();
+            if (ety->isStructTy()) {
+              possible_struct_types.insert(cast<StructType>(ety));
+            }
+          }
+        }
+      }
+    }
+  }
+  if (possible_struct_types.size() == 1) {
+    // this is easy
+    auto sty = *possible_struct_types.begin();
+    auto num_elems = cast<ArrayType>(G.getValueType())->getNumElements();
+    ty.push_back(ArrayType::get(sty->getPointerTo(), num_elems));
+  } else if (possible_struct_types.size() > 1) {
+    // we have multiple possible types here, so we create one global instance for
+    // each candidate type
+    for (auto pt : possible_struct_types) {
+      ty.push_back(pt);
+    }
+  }
+}
+
+static bool isGlobalVoidPtrArray(GlobalVariable &G) {
+  auto valueType = G.getValueType();
+  if (valueType->isArrayTy()) {
+    auto arrTy = cast<ArrayType>(valueType);
+    if (arrTy->getElementType()->isPointerTy() &&
+        arrTy->getElementType()->getPointerElementType()->isIntegerTy(8)) {
+      SmallVector<DIGlobalVariableExpression *, 4> dbg_info;
+      G.getDebugInfo(dbg_info);
+      if (dbg_info.size() == 1) {
+        auto var = dbg_info[0]->getVariable();
+        if (var) {
+          if (auto cy = dyn_cast_or_null<DICompositeType>(var->getType())) {
+            if (auto dy = dyn_cast_or_null<DIDerivedType>(cy->getBaseType())) {
+              assert(dy->getTag() == llvm::dwarf::DW_TAG_pointer_type);
+              if (!dy->getBaseType()) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return false;
 }
 
 void FuncSymbolizePass::
@@ -266,7 +338,36 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
       break;
     }
   }
-  int gIdx = 0;
+  std::unordered_map<GlobalVariable *, std::vector<Type *>> gvar_to_type;
+  for (auto &G : M.globals()) {
+    if (G.isConstant()) {
+      continue;
+    }
+    if (UBSanGlobals.find(&G) != UBSanGlobals.end()) {
+      continue;
+    }
+    if (isGlobalVoidPtrArray(G)) {
+      std::vector<Type *> gty;
+      handleGlobalVoidPtrArray(IRB, G, gty);
+      if (gty.size() > 1) {
+        gvar_to_type[&G] = gty;
+      }
+    }
+  }
+
+  std::unordered_map<GlobalVariable *, std::vector<GlobalVariable *>> gvar_to_instances;
+  for (auto &gvar_type : gvar_to_type) {
+    gvar_to_instances[gvar_type.first] = std::vector<GlobalVariable *>();
+    for (auto gt : gvar_type.second) {
+      std::string gname = "_g_perry_" + gt->getStructName().str() + "_instance";
+      if (!M.getGlobalVariable(gname, true)) {
+        auto gvar = new GlobalVariable(
+          M, gt, false, llvm::GlobalValue::PrivateLinkage,
+          ConstantAggregateZero::get(gt), gname);
+        gvar_to_instances[gvar_type.first].push_back(gvar);
+      }
+    }
+  }
   for (auto &G : M.globals()) {
     if (G.isConstant()) {
       continue;
@@ -275,52 +376,74 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
       continue;
     }
     auto valueType = G.getValueType();
-    switch (valueType->getTypeID()) {
-      case Type::TypeID::IntegerTyID: {
-        // symbolize it
-        std::string symbolName = "g" + std::to_string(gIdx);
-        gIdx += 1;
-        symbolizeValue(IRB, &G, symbolName, DL->getTypeAllocSize(valueType));
-        break;
-      }
-      case Type::TypeID::StructTyID: {
-        // symbolize it first
-        std::string symbolName = "g" + std::to_string(gIdx);
-        gIdx += 1;
-        symbolizeValue(IRB, &G, symbolName, DL->getTypeAllocSize(valueType));
-        // deal with members
-        ParamCell ParentCell;
-        ParentCell.ParamType = valueType;
-        ParentCell.depth = 1;
-        ParentCell.val = &G;
-        unsigned num_elements = valueType->getStructNumElements();
-        for (unsigned i = 0; i < num_elements; ++i) {
-          Type *member_type = valueType->getStructElementType(i);
-          ParamCell *PC = new ParamCell();
-          PC->ParamType = member_type;
-          PC->idx = i;
-          PC->parent = &ParentCell;
-          if (createCellsFrom(IRB, PC)) {
-            ParentCell.child.push_back(PC);
-            // try symbolize it
-            symbolizeFrom(IRB, PC);
-          } else {
-            delete PC;
-          }
-        }
-        fillCellInner(IRB, &ParentCell);
-        break;
-      }
-      default: {
-        std::string err_msg;
-        raw_string_ostream OS(err_msg);
-        OS << "Unsupported value type when symbolizing globals: ";
-        valueType->print(OS);
-        OS << ", ignore";
-        klee_warning("%s", err_msg.c_str());
-        break;
+    ParamCell DataCell;
+    DataCell.ParamType = valueType;
+    if (isGlobalVoidPtrArray(G)) {
+      G.print(errs()); errs() << ", is a global void ptr array\n";
+      std::vector<Type *> gty;
+      handleGlobalVoidPtrArray(IRB, G, gty);
+      if (gty.size() == 1) {
+        DataCell.ParamType = gty[0];
       }
     }
+    if (!valueType->isPointerTy()) {
+      DataCell.val = &G;
+    }
+    if (createCellsFrom(IRB, &DataCell)) {
+      symbolizeFrom(IRB, &DataCell);
+      fillCellInner(IRB, &DataCell);
+      if (valueType->isPointerTy() &&
+          !valueType->getPointerElementType()->isFunctionTy()) {
+        // store the global var
+        assert(DataCell.depth > 0);
+        int tmp = DataCell.depth - 1;
+        Value *FinalValue = DataCell.val;
+        assert(FinalValue);
+        while (tmp > 0) {
+          Value *PtrToValue = IRB.CreateAlloca(FinalValue->getType());
+          IRB.CreateStore(FinalValue, PtrToValue);
+          FinalValue = PtrToValue;
+          --tmp;
+        }
+        IRB.CreateStore(FinalValue, &G);
+      }
+    }
+  }
+  // handle functions that uses void *
+  std::unordered_set<Function *> modified_functions;
+  for (auto &gvar_ins : gvar_to_instances) {
+    for (auto gins : gvar_ins.second) {
+      auto ty = gins->getValueType();
+      auto ty_ptr = ty->getPointerTo();
+      for (auto &F : M) {
+        if (GlovalVoidPtrArrayUserFn.find(&F) != GlovalVoidPtrArrayUserFn.end()) {
+          continue;
+        }
+        std::vector<BitCastInst *> replaces;
+        for (auto &B : F) {
+          for (auto &I : B) {
+            if (auto BCI = dyn_cast<BitCastInst>(&I)) {
+              if (BCI->getDestTy() == ty_ptr &&
+                  BCI->getSrcTy()->isPointerTy() &&
+                  BCI->getSrcTy()->getPointerElementType()->isIntegerTy(8)) {
+                replaces.push_back(BCI);
+              }
+            }
+          }
+        }
+        if (replaces.empty()) {
+          continue;
+        }
+        for (auto bci : replaces) {
+          bci->replaceAllUsesWith(gins);
+          bci->eraseFromParent();
+        }
+        modified_functions.insert(&F);
+      }
+    }
+  }
+  for (auto F : modified_functions) {
+    GlovalVoidPtrArrayUserFn.insert(F);
   }
 }
 
@@ -631,6 +754,7 @@ createDMAChannel(IRBuilder<> &IRB, ParamCell *PC, const void *Cdef) {
   return phi;
 }
 
+// TODO: improve the ways we handle type chains 
 bool FuncSymbolizePass::
 createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
   std::stack<ParamCell*> WorkStack;
@@ -638,13 +762,16 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
   bool ret = true;
   const DMAChannelDef *Cdef = nullptr;
 
+  // avoid type loops (e.g., linked lists)
+  std::unordered_map<Type *, unsigned> allocated_struct_types;
+
   while (!WorkStack.empty()) {
     ParamCell *PC = WorkStack.top();
     WorkStack.pop();
 
     switch (PC->ParamType->getTypeID()) {
       case Type::TypeID::StructTyID: {
-        if (!(PC->parent && PC->depth == 0)) {
+        if (!PC->allocated()) {
           if (!PC->ParamType->getStructName().equals(PeripheralPlaceholder)) {
             if (PC->depth == 1 &&
                 shouldStructPtrBeNull(PC->ParamType->getStructName())) {
@@ -655,6 +782,16 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
               PC->val = createDMAChannel(IRB, PC, Cdef);
               break;
             } else {
+              if (allocated_struct_types.find(PC->ParamType) !=
+                  allocated_struct_types.end()) {
+                if (allocated_struct_types[PC->ParamType] >= RECURSIVE_TYPE_LENGTH) {
+                  PC->val = ConstantPointerNull::get(PointerType::get(PC->ParamType, 0));
+                  break;
+                }
+                allocated_struct_types[PC->ParamType] += 1;
+              } else {
+                allocated_struct_types[PC->ParamType] = 0;
+              }
               PC->val = IRB.CreateAlloca(PC->ParamType);
             }
           } else {
@@ -676,7 +813,7 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
         break;
       }
       case Type::TypeID::IntegerTyID: {
-        if (!(PC->parent && PC->depth == 0)) {
+        if (!PC->allocated()) {
           // For now, we intuitively treat integer pointers as buffers.
           // Maybe we can do beter based on both names and types?
           if (PC->depth == 1) {
@@ -706,8 +843,20 @@ createCellsFrom(IRBuilder<> &IRB, ParamCell *root) {
         break;
       }
       case Type::TypeID::ArrayTyID: {
-        if (!(PC->parent && PC->depth == 0)) {
+        if (!PC->allocated()) {
           klee_error("Symbolizing standalone arrays is not supported");
+        }
+        auto *arr = dyn_cast<ArrayType>(PC->ParamType);
+        unsigned int NumElements = arr->getNumElements();
+        for (unsigned int i = 0; i < NumElements; ++i) {
+          ParamCell *NPC = new ParamCell();
+          PC->child.push_back(NPC);
+          NPC->parent = PC;
+          NPC->ParamType = arr->getElementType();
+          NPC->idx = i;
+        }
+        for (unsigned int i = NumElements; i > 0; --i) {
+          WorkStack.push(PC->child[i - 1]);
         }
         break;
       }
@@ -775,8 +924,8 @@ void FuncSymbolizePass::symbolizeFrom(IRBuilder<> &IRB, ParamCell *root) {
     if (PC->val) {
       if (PC->ParamType->isStructTy() &&
           (PC->ParamType->getStructName().equals(PeripheralPlaceholder) ||
-           shouldStructPtrBeNull(PC->ParamType->getStructName()) ||
-           isDMAChannelTy(PC->ParamType->getStructName()))) {
+           isDMAChannelTy(PC->ParamType->getStructName()) ||
+           isa<ConstantPointerNull>(PC->val))) {
         continue;
       }
       std::string SymbolName = "s" + std::to_string(symidx);
@@ -2837,10 +2986,10 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
     Function *TargetF = M.getFunction(TFName);
     // let's go
     symidx = 1;
-    // symbolize all global variables
-    symbolizeGlobals(IRBF, M);
     // prepare other peripherals used
     createPeriph(IRBF, M);
+    // symbolize all global variables
+    symbolizeGlobals(IRBF, M);
     // create params for
     std::vector<ParamCell*> results;
     createParamsFor(TargetF, IRBF, results);
