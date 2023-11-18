@@ -2254,9 +2254,13 @@ static const std::vector<std::string> dma_tx_disable_funcs = {
   "LL_SPI_DisableDMAReq_TX",
 };
 
-static const std::set<std::string> uart_irq_hooks = {
+static const std::set<std::string> general_irq_hooks = {
   "HAL_UARTEx_RxEventCallback",
-  "UART_EndTransmit_IT"
+  "UART_EndTransmit_IT",
+  "HAL_ADC_ConvCpltCallback",
+  "HAL_ADCEx_InjectedConvCpltCallback",
+  "HAL_ADC_LevelOutOfWindowCallback",
+  "HAL_GPIO_EXTI_Callback",
 };
 
 static void
@@ -2305,7 +2309,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     isIRQ = (TopFunc.find("IRQHandler") != std::string::npos);
     auto SymName = FunctionToSymbolName.at(TopFunc);
     auto &Record = allRecords.at(TopFunc);
-    const std::set<uint64_t> *OkVals = nullptr;
+    const std::unordered_set<uint64_t> *OkVals = nullptr;
     if (OkValuesMap.find(TopFunc) != OkValuesMap.end()) {
       OkVals = &OkValuesMap.at(TopFunc);
     }
@@ -2640,7 +2644,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
       continue;
     }
 
-    if (isIRQ && !PerryFunctionHooks.empty()) {
+    if (isIRQ) {
       for (auto &rec : Record) {
         for (auto &hk : rec.triggerred_hooks) {
           if (timer_irq_funcs.find(hk.hook_name) != timer_irq_funcs.end()) {
@@ -2655,15 +2659,31 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             should_continue = true;
           }
 
-          if (uart_irq_hooks.find(hk.hook_name) != uart_irq_hooks.end()) {
+          if (general_irq_hooks.find(hk.hook_name) != general_irq_hooks.end()) {
             auto &cs_cur = hk.constraints;
-            std::vector<ref<PerryExpr>> UartIRQConstraints;
+            std::vector<ref<PerryExpr>> GeneralIRQConstraints;
             for (auto &CS : cs_cur) {
               if (containsReadTo(SymName, CS)) {
-                UartIRQConstraints.push_back(CS);
+                GeneralIRQConstraints.push_back(CS);
               }
             }
-            isUniqueConstraints(unique_constraints_irq, UartIRQConstraints);
+            if (!GeneralIRQConstraints.empty()) {
+              isUniqueConstraints(unique_constraints_irq, GeneralIRQConstraints);
+            }
+            should_continue = false;
+          }
+
+          if (hk.hook_name == PERRY_GENERAL_HOOK) {
+            auto &cs_cur = hk.constraints;
+            std::vector<ref<PerryExpr>> GeneralIRQConstraints;
+            for (auto &CS : cs_cur) {
+              if (containsReadTo(SymName, CS)) {
+                GeneralIRQConstraints.push_back(CS);
+              }
+            }
+            if (!GeneralIRQConstraints.empty()) {
+              isUniqueConstraints(unique_constraints_irq, GeneralIRQConstraints);
+            }
             should_continue = false;
           }
         }

@@ -1335,6 +1335,7 @@ handleOOB(ExecutionState &state, KInstruction *target,
 }
 const std::vector<PerryCustomHook> PerryCustomHook::perry_custom_hooks = {
   PerryCustomHook(PERRY_DMA_XFER_CPLT_HOOK, 0),
+  PerryCustomHook(PERRY_GENERAL_HOOK, 1),
 };
 
 void SpecialFunctionHandler::

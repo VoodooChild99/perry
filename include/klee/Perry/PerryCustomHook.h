@@ -15,7 +15,9 @@ struct PerryCustomHook {
 };
 
 #define PERRY_DMA_XFER_CPLT_HOOK_IDX    0
-
 #define PERRY_DMA_XFER_CPLT_HOOK    "perry_dma_hook"
+
+#define PERRY_GENERAL_HOOK_IDX    1
+#define PERRY_GENERAL_HOOK    "perry_general_hook"
 
 }
