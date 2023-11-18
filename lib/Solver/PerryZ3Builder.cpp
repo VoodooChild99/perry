@@ -342,16 +342,16 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
     return original;
   }
 
-  s1.add(!original);
-  s2.add(original);
+  s1.add(original);
+  s2.add(!original);
   s2.set("core.minimize", true);
 
   z3::expr_vector clauses(ctx);
-  if (s1.check() == z3::unsat) {
+  if (s2.check() == z3::unsat) {
     // original must be true
     return ctx.bool_val(true);
   }
-  if (s2.check() == z3::unsat) {
+  if (s1.check() == z3::unsat) {
     // original must be false
     return ctx.bool_val(false);
   }
@@ -379,21 +379,21 @@ z3::expr PerryZ3Builder::simplifyLogicExpr(const z3::expr &original) {
     }
     if (clause.size() > 1) {
       auto tmp = z3::mk_or(clause);
-      clauses.push_back(tmp);
+      clauses.push_back(!tmp);
       s1.add(tmp);
     } else if (clause.size() == 1) {
       auto tmp = clause[0];
-      clauses.push_back(tmp);
+      clauses.push_back(!tmp);
       s1.add(tmp);
     } else {
       klee_error("Error when simplify logical expressions: failed to get unsat core");
     }
   }
   if (clauses.size() == 0) {
-    // if we ever get here, s1 must be true, which means original must be false
-    return ctx.bool_val(false);
+    // if we ever get here, s1 must be true, which means original must be true
+    return ctx.bool_val(true);
   } else if (clauses.size() > 1) {
-    return z3::mk_and(clauses);
+    return z3::mk_or(clauses);
   } else {
     return clauses[0];
   }
@@ -1166,18 +1166,59 @@ reconstructExpr(const z3::expr &e, z3::expr_vector &orig,
       }
       case Z3_OP_NOT: {
         assert(e.num_args() == 1);
-        auto res = reconstructExpr(
-          e.arg(0), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
-        if (!res.empty()) {
-          if (simplify_not) {
-            auto child = e.arg(0);
-            if (!child.is_true() && !child.is_false() && child.is_const()) {
-              // !(sym == 1) --> sym == 0
-              assert(res[0].is_eq());
-              ret.push_back(res[0].arg(0) == 0);
-              break;
+        auto child = e.arg(0);
+        if (child.is_or()) {
+          // not or = and not
+          z3::expr_vector tmp_vec(ctx);
+          for (const auto &sub_child : child.args()) {
+            tmp_vec.push_back(!sub_child);
+          }
+          assert(tmp_vec.size() >= 1);
+          if (tmp_vec.size() == 1) {
+            auto res = reconstructExpr(
+              tmp_vec[0], orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
             }
           } else {
+            auto res = reconstructExpr(
+              z3::mk_and(tmp_vec), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          }
+        } else if (child.is_and()) {
+          // not and = or not
+          z3::expr_vector tmp_vec(ctx);
+          for (const auto &sub_child : child.args()) {
+            tmp_vec.push_back(!sub_child);
+          }
+          assert(tmp_vec.size() >= 1);
+          if (tmp_vec.size() == 1) {
+            auto res = reconstructExpr(
+              tmp_vec[0], orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          } else {
+            auto res = reconstructExpr(
+              z3::mk_or(tmp_vec), orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+            if (res.size() > 0) {
+              ret.push_back(res[0]);
+            }
+          }
+        } else {
+          auto res = reconstructExpr(
+            child, orig, bool_id_to_idx, SymName, SR, simplify_not, preserve_all);
+          if (!res.empty()) {
+            if (simplify_not) {
+              if (!child.is_true() && !child.is_false() && child.is_const()) {
+                // !(sym == 1) --> sym == 0
+                assert(res[0].is_eq());
+                ret.push_back(res[0].arg(0) == 0);
+                break;
+              }
+            }
             ret.push_back(!res[0]);
           }
         }
