@@ -308,7 +308,9 @@ private:
   llvm::Function *ParamF = nullptr;
   llvm::FunctionCallee DMAInitFC;
   std::unordered_set<llvm::Function *> GlovalVoidPtrArrayUserFn;
+  std::unordered_set<llvm::Function *> InstrumentedCallbacks;
 
+  void handleCallbacks(llvm::Module &M);
   llvm::Value *createDefaultFptr(llvm::IRBuilder<> &IRB,
                                  llvm::PointerType *fptr_ty);
   void handleGlobalVoidPtrArray(llvm::IRBuilder<> &IRB,

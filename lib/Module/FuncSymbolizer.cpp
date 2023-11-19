@@ -209,6 +209,36 @@ bool FuncSymbolizePass::ParamCell::allocated() const {
 }
 
 
+void FuncSymbolizePass::handleCallbacks(Module &M) {
+  for (auto &F : M) {
+    if (F.isDeclaration() || F.isDebugInfoForProfiling()) {
+      continue;
+    }
+    if (InstrumentedCallbacks.find(&F) != InstrumentedCallbacks.end()) {
+      continue;
+    }
+    if (F.getName().contains_insensitive("callback")) {
+      if (F.getBasicBlockList().size() == 1) {
+        auto &B = F.getEntryBlock();
+        unsigned num_insts = 0;
+        for (auto &I : B) {
+          if (I.isDebugOrPseudoInst()) {
+            continue;
+          }
+          ++num_insts;
+        }
+        if (num_insts == 1) {
+          // instrument it
+          IRBuilder<> IRB(F.getContext());
+          IRB.SetInsertPoint(B.getTerminator());
+          IRB.CreateCall(GeneralHookWrapperFC);
+          InstrumentedCallbacks.insert(&F);
+        }
+      }
+    }
+  }
+}
+
 void FuncSymbolizePass::
 symbolizeValue(IRBuilder<> &IRB, Value *Var, const std::string &Name,
                uint32_t Size) {
@@ -3042,6 +3072,7 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
       delete root;
     }
     changed = true;
+    handleCallbacks(M);
   }
 
   if (changed && TargetIsETH) {
