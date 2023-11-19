@@ -108,6 +108,8 @@ class Synthesizer:
     self.__setup_perry_cmdline()
     self.peripheral_results: Mapping[str, Tuple[str, str, str]] = {}
     self.board_result = None
+    self.dma_struct_name = None
+    self.dma_recv_func_name = None
 
   def __get_peripheral_base(self, p: SVDPeripheral) -> int:
     # p_derived_from = p.get_derived_from()
@@ -1356,12 +1358,13 @@ struct {0} {{
       content += '\t/* timer */\n'
       content += '\tQEMUTimer *timer;\n'
       content += '\tuint8_t enabled;\n\n'
-    if self.dma_rx_enable_conds is not None:
-      content += '\t/* dma */\n'
-      content += '\t{} *dma;\n'.format(self.dma_struct_name)
-    if self.dma_channel_infos is not None:
-      content += '\t/* dma channel enable flags*/\n'
-      content += '\tuint8_t channel_enabled[{}];\n'.format(len(self.dma_channel_infos))
+    if self.dma_struct_name is not None:
+      if self.dma_rx_enable_conds is not None:
+        content += '\t/* dma */\n'
+        content += '\t{} *dma;\n'.format(self.dma_struct_name)
+      if self.dma_channel_infos is not None:
+        content += '\t/* dma channel enable flags*/\n'
+        content += '\tuint8_t channel_enabled[{}];\n'.format(len(self.dma_channel_infos))
     content += '\t/* base */\n'
     content += '\tuint32_t base;\n'
     body = body.format(self.struct_name, content)
@@ -1536,7 +1539,7 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
 }}
 """
     content = ''
-    if self.dma_rx_enable_conds is not None:
+    if self.dma_rx_enable_conds is not None and self.dma_recv_func_name is not None:
       content += \
 """
 \tif ({0} && {2}->dma) {{
