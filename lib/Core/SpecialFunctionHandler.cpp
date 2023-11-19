@@ -158,8 +158,8 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("__assert_func", handleAssertFunc, false),
   add("__ubsan_handle_out_of_bounds", handleOOB, false),
   addDNR("klee_custom_assert", handleCustomAssert),
-  addDNR("perry_klee_hook", handlePerryCustomHook),
-  addDNR("perry_klee_hook_wrapper", handlePerryCustomHookWrapper),
+  add("perry_klee_hook", handlePerryCustomHook, false),
+  add("perry_klee_hook_wrapper", handlePerryCustomHookWrapper, false),
 
 #undef addDNR
 #undef add
