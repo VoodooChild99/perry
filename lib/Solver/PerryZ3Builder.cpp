@@ -1455,7 +1455,7 @@ visitLogicBitLevel(const z3::expr &e, z3::expr_vector &result,
   }
 }
 
-#define DEBUG_OUTPUT_EXPR
+// #define DEBUG_OUTPUT_EXPR
 
 z3::expr PerryZ3Builder::
 getLogicalBitExpr(const z3::expr &src, const std::string &SymName,
