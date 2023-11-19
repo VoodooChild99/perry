@@ -1348,7 +1348,7 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   bool reg_related = false;
   if (ts) {
     for (auto tt : *ts) {
-      if (tt & 0x00ff0000) {
+      if (getBufferTaint(tt)) {
         continue;
       }
       reg_related = true;
@@ -4813,7 +4813,7 @@ static void logRegOp(PerryExprManager &perryExprManager,
                      Instruction *place = nullptr           /* NULL if write */)
 {
   TaintTy rts = wos->getPersistTaint(offset_concrete);
-  rts |= wos->getTaintReadCtx(offset_concrete);
+  rts = embedReadCtx(rts, wos->getTaintReadCtx(offset_concrete));
 
   ref<PerryExpr> ER = state.getPerryExpr(perryExprManager, ExprInReg);
   std::vector<ref<PerryExpr>> cur_constraints;
@@ -4831,7 +4831,7 @@ static void logRegOp(PerryExprManager &perryExprManager,
     assert(ts != nullptr);
     bool flag = false;
     for (auto tt : *ts) {
-      if (tt & 0x00ff0000) {
+      if (getBufferTaint(tt)) {
         flag = true;
         break;
       }

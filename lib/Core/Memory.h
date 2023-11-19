@@ -203,7 +203,7 @@ public:
 
   bool readOnly;
 
-  static const TaintTy NO_PERSIST_TAINT = 0xffffffff;
+  static const TaintTy NO_PERSIST_TAINT = 0xffffffffffffffff;
 
 public:
   /// Create a new object state for the given memory object with concrete

@@ -5,7 +5,7 @@
 #include <unordered_set>
 
 namespace klee {
-  using TaintTy = unsigned;
+  using TaintTy = uint64_t;
   using TaintSet = std::unordered_set<TaintTy>;
 
   // return true iff `ts` is not empty (i.e., at least one taint)
@@ -25,6 +25,15 @@ namespace klee {
 
   // merge two taint sets
   void mergeTaint(TaintSet& dst, TaintSet& src);
+
+  TaintTy getReadCtx(TaintTy t);
+  TaintTy getBufferTaint(TaintTy t);
+  TaintTy getRegTaint(TaintTy t);
+  TaintTy getAllTaint(TaintTy t);
+
+  TaintTy embedReadCtx(TaintTy t, TaintTy ctx);
+  TaintTy embedBufferTaint(TaintTy t, TaintTy bt);
+  TaintTy embedRegTaint(TaintTy t, TaintTy rt);
 }
 
 #endif

@@ -651,7 +651,9 @@ void ObjectState::writeTaint(unsigned offset, TaintSet& ts) {
   }
 }
 
-
+// 47-32: reg taint
+// 31-16: buffer taint
+// 15-0: readcnt
 TaintSet* ObjectState::readTaint(unsigned offset) const {
   if (!taints) {
     return nullptr;
@@ -659,12 +661,9 @@ TaintSet* ObjectState::readTaint(unsigned offset) const {
     if (hasPersistentTaint && persistTaint[offset] != NO_PERSIST_TAINT) {
       TaintSet newts;
       TaintReadCtx[offset] += 1;
-      if (TaintReadCtx[offset] > 0x0000ffff) {
-        klee_error("Taint read ctx too big");
-      }
       for (auto t : taints[offset]) {
-        if ((t & 0xffff0000) == (persistTaint[offset] & 0xffff0000)) {
-          newts.insert(persistTaint[offset] | TaintReadCtx[offset]);
+        if (getAllTaint(t) == getAllTaint(persistTaint[offset])) {
+          newts.insert(embedReadCtx(persistTaint[offset], TaintReadCtx[offset]));
         } else {
           newts.insert(t);
         }

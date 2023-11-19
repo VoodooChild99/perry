@@ -1286,7 +1286,7 @@ handleGetTaintInternal(ExecutionState &state, KInstruction *target,
       TaintSet *rt = os->readTaint(i + offset);
       if (rt) {
         for (auto tt : *rt) {
-          if (tt & 0x00ff0000) {
+          if (getBufferTaint(tt)) {
             continue;
           }
           addTaint(ts, tt);

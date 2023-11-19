@@ -2276,11 +2276,11 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
 {
   TaintSet byReg;
   for (auto t : liveTaint) {
-    addTaint(byReg, t & 0xff000000);
+    addTaint(byReg, getRegTaint(t));
   }
   std::cerr << "Possible data registers offsets: ";
   for (auto t : byReg) {
-    std::cerr << ((t & 0xff000000) >> 24) << ", ";
+    std::cerr << t << ", ";
   }
   std::cerr << "\n";
 
@@ -2717,7 +2717,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         auto &cur_access = reg_accesses[PTI.reg_access_idx];
         if (cur_access->AccessType == RegisterAccess::REG_READ) {
           // not a data register
-          if (byReg.find(cur_access->idx & 0xff000000) == byReg.end()) {
+          if (byReg.find(getRegTaint(cur_access->idx)) == byReg.end()) {
             hasNonDataRead = true;
             continue;
           }
@@ -2728,7 +2728,7 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           }
         } else {
           // write to non-data registers are ignored
-          if (byReg.find(cur_access->idx & 0xff000000) == byReg.end()) {
+          if (byReg.find(getRegTaint(cur_access->idx)) == byReg.end()) {
             continue;
           }
         }
@@ -2742,7 +2742,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
         }
         
         if (cur_access->AccessType == RegisterAccess::REG_READ) {
-          // readDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
           readDataRegIdx.insert(cur_access->offset);
           for (auto &CP : checkpoints) {
             if (PTI.reg_access_idx >= CP.reg_access_size_post) {
@@ -2755,7 +2754,6 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
             isUniqueConstraints(unique_constraints_read, RegConstraint);
           }
         } else {
-          // writtenDataRegIdx.insert((AC.first.idx & 0xff000000) >> 24);
           writtenDataRegIdx.insert(cur_access->offset);
           hasWrite = true;
           if (!lastWriteConstraint.empty()) {

@@ -545,11 +545,8 @@ void FuncSymbolizePass::taintPeriph(IRBuilder<> &IRB, Module &M, DIType *ty,
       DIBasicType *BT = cast<DIBasicType>(ty);
       unsigned elm_size = (BT->getSizeInBits() >> 3);
       if (elm_size == 1 || elm_size == 2 || elm_size == 4 || elm_size == 8) {
-        Value *TT = IRB.getInt32(taint * 0x01000000);
+        Value *TT = IRB.getInt64(embedRegTaint(0, taint));
         ++taint;
-        if (taint > 0xff) {
-          klee_error("Register persistent taint too big");
-        }
         Value *Size = IRB.getInt32(elm_size);
         Value *Offset = IRB.CreateIntToPtr(
           IRB.getInt32(TargetStructLoc + offset),
@@ -1318,11 +1315,8 @@ void FuncSymbolizePass::setTaint(IRBuilder<> &IRB,
   int Taint = 1;
 
   for (auto &BF : GuessedBuffers) {
-    Value *TT = IRB.getInt32(Taint * 0x00010000);
+    Value *TT = IRB.getInt64(embedBufferTaint(0, Taint));
     Taint += 1;
-    if (Taint > 0xff) {
-      klee_error("Buffer taint too big");
-    }
     IRB.CreateCall(SetTaintFC, {TT, BF.first, IRB.getInt32(BF.second)});
   }
 }
@@ -2928,12 +2922,12 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
                                          IRBM.getInt8PtrTy());
   SetTaintFC = M.getOrInsertFunction("klee_set_taint",
                                      IRBM.getVoidTy(),
-                                     IRBM.getInt32Ty(),
+                                     IRBM.getInt64Ty(),
                                      IRBM.getInt8PtrTy(),
                                      IRBM.getInt32Ty());
   SetPersistTaintFC = M.getOrInsertFunction("klee_set_persist_taint",
                                             IRBM.getVoidTy(),
-                                            IRBM.getInt32Ty(),
+                                            IRBM.getInt64Ty(),
                                             IRBM.getInt8PtrTy(),
                                             IRBM.getInt32Ty());
   GetTaintFC = M.getOrInsertFunction("klee_get_taint_internal",
