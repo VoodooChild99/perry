@@ -2225,11 +2225,13 @@ static const std::set<std::string> timer_irq_funcs = {
 };
 
 static const std::vector<std::string> dma_enable_funcs = {
-  "LL_DMA_EnableChannel"
+  "LL_DMA_EnableChannel",
+  "LL_DMA_EnableStream",
 };
 
 static const std::vector<std::string> dma_disable_funcs = {
-  "LL_DMA_DisableChannel"
+  "LL_DMA_DisableChannel",
+  "LL_DMA_DisableStream"
 };
 
 static const std::vector<std::string> dma_rx_enable_funcs = {

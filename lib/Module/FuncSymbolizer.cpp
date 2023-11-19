@@ -159,6 +159,11 @@ static const std::vector<DMAChannelDef> dma_channel_struct = {
     .start_padding = 0,
     .end_padding = 4,
   },
+  DMAChannelDef {
+    .sname = "DMA_Stream_TypeDef",
+    .start_padding = 0,
+    .end_padding = 0,
+  },
 };
 
 static inline const DMAChannelDef* isDMAChannelTy(llvm::StringRef name) {
