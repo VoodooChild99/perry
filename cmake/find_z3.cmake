@@ -7,7 +7,9 @@
 #
 #===------------------------------------------------------------------------===#
 include(CMakePushCheckState)
-
+if(DEFINED Z3_INSTALL_PATH)
+  find_package (Z3 PATHS ${Z3_INSTALL_PATH} NO_DEFAULT_PATH)
+endif(DEFINED)
 find_package(Z3)
 # Set the default so that if the following is true:
 # * Z3 was found
