@@ -428,6 +428,16 @@ static bool isGlobalVoidPtrArray(GlobalVariable &G) {
   return false;
 }
 
+static inline bool isIntrinsicGlobalVar(GlobalVariable &G) {
+  if (G.getName().contains("llvm.used") ||
+      G.getName().contains("llvm.compiler.used") ||
+      G.getName().contains("llvm.global_ctors") ||
+      G.getName().contains("llvm.global_dtors")) {
+    return true;
+  }
+  return false;
+}
+
 void FuncSymbolizePass::
 symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
   // filter out UBSAN globals
@@ -436,6 +446,9 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
   while (true) {
     for (auto &G : M.globals()) {
       if (G.isConstant()) {
+        continue;
+      }
+      if (isIntrinsicGlobalVar(G)) {
         continue;
       }
       for (auto U : G.users()) {
@@ -476,6 +489,9 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
     if (G.isConstant()) {
       continue;
     }
+    if (isIntrinsicGlobalVar(G)) {
+      continue;
+    }
     if (UBSanGlobals.find(&G) != UBSanGlobals.end()) {
       continue;
     }
@@ -506,6 +522,9 @@ symbolizeGlobals(llvm::IRBuilder<> &IRB, llvm::Module &M) {
       continue;
     }
     if (UBSanGlobals.find(&G) != UBSanGlobals.end()) {
+      continue;
+    }
+    if (isIntrinsicGlobalVar(G)) {
       continue;
     }
     auto valueType = G.getValueType();
