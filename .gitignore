@@ -41,8 +41,11 @@ synthesizer/__pycache__
 synthesizer/test
 synthesizer/log*
 synthesizer/perry-*.json
-synthesizer/old-results
 synthesizer/example/*/loops.yaml
+synthesizer/example/*/periph-struct.yaml
+synthesizer/example/*/succ-ret.yaml
+synthesizer/exp-*
+
 
 profile
 klee-out-*
