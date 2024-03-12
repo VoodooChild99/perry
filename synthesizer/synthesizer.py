@@ -19,21 +19,8 @@ from typing import Dict, List, Mapping, Set, Tuple
 
 DEFAULT_TIME_SCALE = 'us'
 
-PERIPH_HOOKS = [
-  (["TIM"], ["HAL_TIM_PeriodElapsedCallback"]),
-  (["USART", "UART"], ["HAL_UARTEx_RxEventCallback", "UART_EndTransmit_IT"]),
-  (["ADC"], ["HAL_ADC_ConvCpltCallback", "HAL_ADCEx_InjectedConvCpltCallback", "HAL_ADC_LevelOutOfWindowCallback"]),
-  (["EXTI"], ["HAL_GPIO_EXTI_Callback"]),
-]
+PERIPH_HOOKS = []
 
-TIMER_HOOKS = [
-  "HAL_TIM_PeriodElapsedCallback"
-]
-
-UART_HOOKS = [
-  "HAL_UARTEx_RxEventCallback",
-  "UART_EndTransmit_IT"
-]
 
 class DMAInfo:
   def __init__(self) -> None:
