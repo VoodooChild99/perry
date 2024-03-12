@@ -2354,7 +2354,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       if r.address_offset in self.irq_reg_offset:
         do_irq_update = True
 
-      if do_irq_update and self.has_update_func:
+      if do_irq_update and self.has_update_func and self.dma_channel_infos is None:
         content += '\t\t\t{}({});\n'.format(
           self.update_func_name, self.periph_instance_name
         )
