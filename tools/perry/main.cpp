@@ -2757,9 +2757,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           }
           if (isIRQ) {
             isUniqueConstraints(unique_constraints_irq, RegConstraint);
-          } else {
-            isUniqueConstraints(unique_constraints_read, RegConstraint);
           }
+          isUniqueConstraints(unique_constraints_read, RegConstraint);
         } else {
           writtenDataRegIdx.insert(cur_access->offset);
           hasWrite = true;
@@ -2791,9 +2790,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           }
           if (isIRQ) {
             isUniqueConstraints(unique_constraints_irq, RegConstraint);
-          } else {
-            isUniqueConstraints(unique_constraints_write, RegConstraint);
           }
+          isUniqueConstraints(unique_constraints_write, RegConstraint);
         }
       }
 
