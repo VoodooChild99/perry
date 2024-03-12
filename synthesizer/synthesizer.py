@@ -14,10 +14,8 @@ from cmsis_svd.parser import (
   SVDRegister,
   SVDField,
   SVDInterrupt,
-  SVDRegisterArray
 )
 from typing import Dict, List, Mapping, Set, Tuple
-from parse import parse
 
 DEFAULT_TIME_SCALE = 'us'
 
