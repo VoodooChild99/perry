@@ -21,6 +21,7 @@ DEFAULT_TIME_SCALE = 'us'
 
 PERIPH_HOOKS = []
 
+CR_REGEX = re.compile(r'(CR[0-9]*)|(C[0-9]*)')
 
 class DMAInfo:
   def __init__(self) -> None:
@@ -1118,7 +1119,12 @@ class Synthesizer:
         assert(False and "Should not happen")
     
   
-  def __z3_expr_to_reg(self, expr: ExprRef, is_set: bool, value:str="value") -> Set[str]:
+  def __z3_expr_to_reg(
+      self, expr: ExprRef,
+      is_set: bool,
+      value:str="value",
+      do_filter=False
+    ) -> Set[str]:
     # For now, we only support AND, NOT, EQ. 
     # Note that the AND expr must not be a sub-expr of NOT. Otherwise we may
     # have multiple options, and we need to ask the solver to workout a proper
@@ -1147,6 +1153,7 @@ class Synthesizer:
         # sys.exit(8)
         return []
     for e in set_expr:
+      should_add = True
       e_kind = e.decl().kind()
       eq_expr = None
       needs_negate = False
@@ -1191,6 +1198,9 @@ class Synthesizer:
           body = "*((uint{}_t *)(((uint8_t *)&{}) + {}))".format(num_bits, value, reg_offset)
         else:
           body = '{}->{}'.format(self.periph_instance_name, target_reg.name)
+          if do_filter:
+            if CR_REGEX.fullmatch(target_reg.name) is not None:
+              should_add = False
         if real_set:
           body += ' |= {};'.format(hex(mask))
         else:
@@ -1202,7 +1212,11 @@ class Synthesizer:
           self.periph_instance_name,
           target_reg.name,
           self.__get_linear_formula(right, value))
-      reg_ops.add(body)
+        if do_filter:
+          if CR_REGEX.fullmatch(target_reg.name) is not None:
+            should_add = False
+      if should_add:
+        reg_ops.add(body)
     return reg_ops
 
   def __get_field(self, obj, field) -> str:
@@ -1407,11 +1421,11 @@ static void {0}({1} *{2}) {{
     # reset write conditions
     wc_reset_exprs = set()
     if self.write_constraint is not None:
-      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.write_constraint, True))
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.write_constraint, True, do_filter=True))
     if self.between_writes_constraint is not None:
-      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.between_writes_constraint, True))
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.between_writes_constraint, True, do_filter=True))
     if self.post_writes_constraint is not None:
-      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.post_writes_constraint, True))
+      wc_reset_exprs = wc_reset_exprs.union(self.__z3_expr_to_reg(self.post_writes_constraint, True, do_filter=True))
     for s in wc_reset_exprs:
       content += '\t{}\n'.format(s)
     if self.eth_rx_desc_reg_offset is not None:
@@ -1541,7 +1555,7 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
         self.periph_instance_name, rdr.name
       )
     if self.read_constraint is not None:
-      for s in self.__z3_expr_to_reg(self.read_constraint, True):
+      for s in self.__z3_expr_to_reg(self.read_constraint, True, do_filter=True):
         content += '\t{}\n'.format(s)
     do_update_expr = ''
     if self.has_update_func:
@@ -1656,21 +1670,21 @@ buffer_drained:
     expr_set = set()
     
     if self.write_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, False))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, False, do_filter=True))
     if self.between_writes_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, False))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, False, do_filter=True))
     if self.post_writes_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, False))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, False, do_filter=True))
     for s in expr_set:
       content_before_write += '\t{}\n'.format(s)
     expr_set.clear()
     content_after_write = ''
     if self.write_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, True))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, True, do_filter=True))
     if self.between_writes_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, True))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, True, do_filter=True))
     if self.post_writes_constraint is not None:
-      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, True))
+      expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, True, do_filter=True))
     for s in expr_set:
       content_after_write += '\t{}\n'.format(s)
     assert(len(self.write_datareg_offset) == 1)
@@ -2236,7 +2250,7 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
       if r.address_offset in self.read_datareg_offset:
         # 1. unset the condition:
         if self.read_constraint is not None:
-          for s in self.__z3_expr_to_reg(self.read_constraint, False):
+          for s in self.__z3_expr_to_reg(self.read_constraint, False, do_filter=True):
             content += '\t\t\t{}\n'.format(s)
         # 2. accept input:
         content += '\t\t\tqemu_chr_fe_accept_input(&({}->chr));\n'.format(
@@ -2300,7 +2314,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
       else:
         content += '\t\tcase A_{}:\n'.format(r.name)
-      if r.address_offset in self.data_related_reg_offset and not r.name.startswith("CR"):
+      if r.address_offset in self.data_related_reg_offset and CR_REGEX.fullmatch(r.name) is None:
         # these registers as considered as status registers, as a result,
         # bits of these registers should only be set by hardware
         content += '\t\t\t{}->{} &= value;\n'.format(
