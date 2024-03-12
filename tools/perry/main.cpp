@@ -2239,24 +2239,28 @@ static const std::vector<std::string> dma_rx_enable_funcs = {
   "LL_USART_EnableDMAReq_RX",
   "LL_I2C_EnableDMAReq_RX",
   "LL_SPI_EnableDMAReq_RX",
+  "LL_I2S_EnableDMAReq_RX",
 };
 
 static const std::vector<std::string> dma_rx_disable_funcs = {
   "LL_USART_DisableDMAReq_RX",
   "LL_I2C_DisableDMAReq_RX",
   "LL_SPI_DisableDMAReq_RX",
+  "LL_I2S_DisableDMAReq_RX",
 };
 
 static const std::vector<std::string> dma_tx_enable_funcs = {
   "LL_USART_EnableDMAReq_TX",
   "LL_I2C_EnableDMAReq_TX",
   "LL_SPI_EnableDMAReq_TX",
+  "LL_I2S_EnableDMAReq_TX",
 };
 
 static const std::vector<std::string> dma_tx_disable_funcs = {
   "LL_USART_DisableDMAReq_TX",
   "LL_I2C_DisableDMAReq_TX",
   "LL_SPI_DisableDMAReq_TX",
+  "LL_I2S_DisableDMAReq_TX",
 };
 
 static const std::set<std::string> general_irq_hooks = {
