@@ -2213,7 +2213,8 @@ inferRRDependenceWithCheckPoint(const PerryCheckPoint &cp,
 }
 
 static const std::vector<std::string> timer_enable_funcs = {
-  "LL_TIM_EnableCounter"
+  "LL_TIM_EnableCounter",
+  "LL_LPTIM_Enable",
 };
 
 static const std::vector<std::string> timer_disable_funcs = {
@@ -2221,7 +2222,7 @@ static const std::vector<std::string> timer_disable_funcs = {
 };
 
 static const std::set<std::string> timer_irq_funcs = {
-  "HAL_TIM_PeriodElapsedCallback"
+  "HAL_TIM_PeriodElapsedCallback",
 };
 
 static const std::vector<std::string> dma_enable_funcs = {

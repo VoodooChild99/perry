@@ -2870,6 +2870,12 @@ static const std::vector<TimFuncDesc> set_timer_period_funcs = {
     .sname = "",
     .data_idx = 1,
   },
+  TimFuncDesc {
+    .fname = "LL_LPTIM_SetAutoReload",
+    .ty = PARAMETER,
+    .sname = "",
+    .data_idx = 1,
+  },
 };
 
 static const std::vector<TimFuncDesc> set_timer_cnt_funcs = {
@@ -2879,10 +2885,12 @@ static const std::vector<TimFuncDesc> set_timer_cnt_funcs = {
     .sname = "",
     .data_idx = 1,
   },
-};
-
-static const std::vector<std::string> enable_timer_funcs = {
-  "LL_TIM_EnableCounter",
+  TimFuncDesc {
+    .fname = "LL_LPTIM_SetCounter",
+    .ty = PARAMETER,
+    .sname = "",
+    .data_idx = 1,
+  },
 };
 
 bool FuncSymbolizePass::isTimerPeriph(llvm::StringRef name) {
