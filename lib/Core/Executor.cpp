@@ -463,6 +463,10 @@ cl::list<unsigned> BitBandAliasSize(
   "bitband-alias-size",
   cl::desc("Size of a bitband alias"));
 
+cl::opt<bool> ConcretizeAllSymbolicMemoryAccess(
+  "perry-concretize-all", cl::init(true),
+  cl::desc("Concretize all symbolic memory accesses"));
+
 } // namespace
 
 // XXX hack
@@ -4937,7 +4941,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         if (!isa<ConstantExpr>(offset)) {
           uint64_t tmp_offset = 0;
           toConstantClean(state, offset)->toMemory(&tmp_offset);
-          constRegIdx = enumConstant(state, offset);
+          if (ConcretizeAllSymbolicMemoryAccess ||
+              isRegOp(state, os, tmp_offset)) {
+            constRegIdx = enumConstant(state, offset);
+          }
         }
       }
       if (isWrite) {
@@ -5170,7 +5177,10 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         if (!isa<ConstantExpr>(offset)) {
           uint64_t tmp_offset = 0;
           toConstantClean(state, offset)->toMemory(&tmp_offset);
-          constRegIdx = enumConstant(state, offset);
+          if (ConcretizeAllSymbolicMemoryAccess ||
+              isRegOp(state, os, tmp_offset)) {
+            constRegIdx = enumConstant(state, offset);
+          }
         }
       }
       if (isWrite) {

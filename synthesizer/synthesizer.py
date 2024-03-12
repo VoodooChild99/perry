@@ -3033,6 +3033,10 @@ type_init({0});
       "--perry-out-file={}".format(out_file),
     ]
 
+    if 'partial-concretize' in p:
+      if p['partial-concretize']:
+        addon_cmd.append("--perry-concretize-all=false")
+
     bc_to_include = set(self.shared_bitcode)
     for abc in additional_bc:
       bc_to_include.add(abc)
