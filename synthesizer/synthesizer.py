@@ -400,6 +400,7 @@ class Synthesizer:
     self.dma_tx_enable_conds = None
     self.dma_tx_disable_conds = None
     self.has_update_func = False
+    self.has_transmit_func = False
 
     if constraint_file is None:
       self.read_datareg_offset = []
@@ -1687,7 +1688,10 @@ buffer_drained:
       expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, True, do_filter=True))
     for s in expr_set:
       content_after_write += '\t{}\n'.format(s)
-    assert(len(self.write_datareg_offset) == 1)
+    if len(self.write_datareg_offset) == 0:
+      self.has_transmit_func = False
+      return ''
+    self.has_transmit_func = True
     do_update_expr = ''
     if self.has_update_func:
       do_update_expr += '\t{}({});'.format(self.update_func_name, self.periph_instance_name)
