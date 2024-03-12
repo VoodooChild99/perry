@@ -36,6 +36,7 @@
 
 #include <cerrno>
 #include <sstream>
+#include <unordered_set>
 
 using namespace llvm;
 using namespace klee;
@@ -1352,6 +1353,7 @@ const std::vector<PerryCustomHook> PerryCustomHook::perry_custom_hooks = {
 void SpecialFunctionHandler::
 handlePerryCustomHook(ExecutionState &state,
                       KInstruction *target, std::vector<ref<Expr>> &arguments) {
+  static std::unordered_map<std::string, std::string *> hook_name_cache;
   if (arguments.size() < 1) {
     executor.terminateStateOnUserError(state,
       "Incorrect number of arguments to perry_klee_hook(size_t)");
@@ -1381,8 +1383,11 @@ handlePerryCustomHook(ExecutionState &state,
           klee::ConstantExpr *cidx = dyn_cast<ConstantExpr>(arguments[1]);
           if (cidx) {
             std::string hn = hk.name + std::to_string(cidx->getZExtValue());
+            if (hook_name_cache.find(hn) == hook_name_cache.end()) {
+              hook_name_cache.insert(std::make_pair(hn, new std::string(hn)));
+            }
             state.executed_hooks.emplace_back(
-              PerryHook(hn, cur_constraints));
+              PerryHook(*hook_name_cache[hn], cur_constraints));
             return;
           }
         }
