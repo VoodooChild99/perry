@@ -213,6 +213,103 @@ bool FuncSymbolizePass::ParamCell::allocated() const {
   return ((parent && depth == 0) || val);
 }
 
+void FuncSymbolizePass::boundEnums(llvm::Function *F) {
+  std::vector<unsigned> int_arg_idx;
+  LLVMContext &Ctx = F->getContext();
+  for (auto &arg : F->args()) {
+    if (arg.getType()->isIntegerTy()) {
+      int_arg_idx.push_back(arg.getArgNo() + 1);
+    }
+  }
+  if (int_arg_idx.empty()) {
+    return;
+  }
+  auto SP = F->getSubprogram();
+  if (!SP) {
+    return;
+  }
+  auto ST = SP->getType();
+  if (!ST) {
+    return;
+  }
+  auto TA = ST->getTypeArray();
+  IRBuilder<> IRB(Ctx);
+  BasicBlock *assert_block = nullptr;
+  BasicBlock *new_entry_block = nullptr;
+  BasicBlock *orig_entry_block = &F->getEntryBlock();
+  int cnt = 0;
+  for (auto arg_idx : int_arg_idx) {
+    auto AT = TA[arg_idx];
+    bool isEnum = true;
+    bool foundEnum = false;
+    while (AT && isEnum && !foundEnum) {
+      switch (AT->getMetadataID()) {
+        case Metadata::MetadataKind::DIDerivedTypeKind: {
+          AT = cast<DIDerivedType>(AT)->getBaseType();
+          break;
+        }
+        case Metadata::MetadataKind::DICompositeTypeKind: {
+          auto CT = cast<DICompositeType>(AT);
+          if (CT->getTag() != llvm::dwarf::DW_TAG_enumeration_type) {
+            isEnum = false;
+          } else {
+            foundEnum = true;
+          }
+          break;
+        }
+        case Metadata::MetadataKind::DIBasicTypeKind: {
+          isEnum = false;
+          break;
+        }
+        default:{
+          isEnum = false;
+          std::string MSG;
+          raw_string_ostream OS(MSG);
+          AT->print(OS);
+          klee_warning_once("Unhandled DIType %s in %s", MSG.c_str(),
+                            F->getName().str().c_str());
+          break;
+        }
+      }
+    }
+    if (foundEnum) {
+      assert(AT != nullptr);
+      auto NA = cast<DICompositeType>(AT)->getElements();
+      std::vector<Value *> ored;
+      auto *the_arg = F->getArg(arg_idx - 1);
+      for (auto N : NA) {
+        auto E = dyn_cast<DIEnumerator>(N);
+        assert(E != nullptr);
+        if (!new_entry_block) {
+          std::string block_name = "new_entry_block_" + std::to_string(cnt);
+          ++cnt;
+          new_entry_block = BasicBlock::Create(Ctx, block_name, F, orig_entry_block);
+          IRB.SetInsertPoint(new_entry_block);
+        }
+        ored.push_back(
+          IRB.CreateICmpEQ(
+            the_arg,
+            ConstantInt::get(IntegerType::getInt32Ty(Ctx),
+                             E->getValue().getZExtValue()))
+        );
+      }
+      if (ored.empty()) {
+        continue;
+      }
+      if (!assert_block) {
+        assert_block = BasicBlock::Create(Ctx, "assert_block", F);
+        IRBuilder<> IRBB(Ctx);
+        IRBB.SetInsertPoint(assert_block);
+        IRBB.CreateCall(AssertFC);
+        IRBB.CreateUnreachable();
+      }
+      Value *cond = (ored.size() == 1) ? ored[0] : IRB.CreateOr(ored);
+      IRB.CreateCondBr(cond, orig_entry_block, assert_block);
+      orig_entry_block = new_entry_block;
+      new_entry_block = nullptr;
+    }
+  }
+}
 
 void FuncSymbolizePass::handleCallbacks(Module &M) {
   for (auto &F : M) {
@@ -3077,6 +3174,7 @@ bool FuncSymbolizePass::runOnModule(Module &M) {
       delete root;
     }
     changed = true;
+    boundEnums(TargetF);
     handleCallbacks(M);
   }
 

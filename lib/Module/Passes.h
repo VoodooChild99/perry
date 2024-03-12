@@ -351,6 +351,7 @@ private:
   void applyDataHeuristic(llvm::IRBuilder<> &IRB,
                           std::vector<ParamCell*> &results,
                           llvm::Function *TargetF);
+  void boundEnums(llvm::Function *F);
   llvm::Value* createDMAChannel(llvm::IRBuilder<> &IRB, ParamCell *PC,
                                 const void * Cdef);
 };
