@@ -414,9 +414,10 @@ static bool isGlobalVoidPtrArray(GlobalVariable &G) {
         if (var) {
           if (auto cy = dyn_cast_or_null<DICompositeType>(var->getType())) {
             if (auto dy = dyn_cast_or_null<DIDerivedType>(cy->getBaseType())) {
-              assert(dy->getTag() == llvm::dwarf::DW_TAG_pointer_type);
-              if (!dy->getBaseType()) {
-                return true;
+              if (dy->getTag() == llvm::dwarf::DW_TAG_pointer_type) {
+                if (!dy->getBaseType()) {
+                  return true;
+                }
               }
             }
           }
