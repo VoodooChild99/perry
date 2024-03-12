@@ -26,7 +26,7 @@ def list_peripherals(svd_file: str):
     if derived_from is None:
       entry = [
         "0x%08x" % p._base_address,
-        hex(p._address_block.size),
+        hex(p._address_blocks[0].size),
         p.name,
         irqs,
         ''
@@ -34,7 +34,7 @@ def list_peripherals(svd_file: str):
     else:
       entry = [
         "0x%08x" % p._base_address,
-        hex(derived_from._address_block.size),
+        hex(derived_from._address_blocks[0].size),
         p.name,
         irqs,
         derived_from.name
