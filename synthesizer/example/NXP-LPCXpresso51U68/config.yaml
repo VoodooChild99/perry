@@ -50,6 +50,13 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_usart.c.obj
     target-struct: USART_Type
     constraint_file: perry-nxp-lpc51u68-usart.json
+  -
+    target: I2C0
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/LPCXpresso51U68/perry-build/debug/fsl_i2c.c.obj
+    target-struct: I2C_Type
+    constraint_file: perry-nxp-lpc51u68-i2c.json
 
 board_config:
   cpu: cortex-m0
@@ -91,3 +98,6 @@ board_config:
     -
       kind: SPI
       instance: [SPI5]
+    -
+      kind: I2C
+      instance: [I2C0]

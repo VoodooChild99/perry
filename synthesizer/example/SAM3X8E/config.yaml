@@ -1,0 +1,156 @@
+svd: ATSAM3X8E.svd
+
+prefix: ATSAM3X8E
+
+perry-path: ../../../build/bin/perry
+
+perry-memory-limit: 49152
+
+bitcode:
+  - ../../../../xdk-asf-3.52.0/build/SAM3X8E/libhal-SAM3X8E.flash.a.bca
+
+loop-file: ./loops.yaml
+
+additional-peripheral:
+  -
+    base: 0xe0000000
+    size: 0x1000
+  -
+    base: 0xe0001000
+    size: 0x60
+  -
+    base: 0xe0004000
+    size: 0xfd0
+  -
+    base: 0xe000e000
+    size: 0xc
+  -
+    base: 0xe000e010
+    size: 0x10
+  -
+    base: 0xe000e100
+    size: 0xe04
+  -
+    base: 0xe000ed00
+    size: 0x28
+  -
+    base: 0xe000edf0
+    size: 0x10
+  -
+    base: 0xe000ed90
+    size: 0x30
+  -
+    base: 0xe000ef30
+    size: 0x20
+
+peripheral_workload:
+  -
+    target: UART
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/uart.bc
+    target-struct: Uart
+    constraint_file: perry-atsam3x8e-uart.json
+  -
+    target: RSTC
+  -
+    target: WDT
+  -
+    target: EFC0
+  -
+    target: EFC1
+  -
+    target: PMC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/pmc.bc
+    target-struct: Pmc
+    constraint_file: perry-atsam3x8e-pmc.json
+  -
+    target: PIOA
+    kind: PIO
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/pio_handler.bc
+    target-struct: Pio
+    constraint_file: perry-atsam3x8e-pio.json
+  -
+    target: ADC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/adc.bc
+    target-struct: Adc
+    constraint_file: perry-atsam3x8e-adc.json
+  -
+    target: TC1
+    kind: TC
+  -
+    target: SPI0
+    kind: SPI
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/spi.bc
+    target-struct: Spi
+    constraint_file: perry-atsam3x8e-spi.json
+  -
+    target: DACC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/dacc.bc
+    target-struct: Dacc
+    constraint_file: perry-atsam3x8e-dac.json
+  -
+    target: TWI0
+    kind: TWI
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/twi.bc
+    target-struct: Twi
+    constraint_file: perry-atsam3x8e-twi.json
+  -
+    target: PWM
+
+board_config:
+  cpu: cortex-m3
+  machine_name: atsam3x8e
+  clk_freq: 84000000
+  num_irq: 256
+  init_vtor: 0x00080000
+  bitband: true
+
+  memory:
+    -
+      name: main-flash
+      base: 0x00000000
+      size: 0x00200000
+      type: flash
+    -
+      name: sram
+      base: 0x20000000
+      size: 0x00200000
+      type: ram
+
+  peripheral:
+    -
+      kind: UART
+    -
+      kind: RSTC
+    -
+      kind: WDT
+    -
+      kind: EFC0
+    -
+      kind: EFC1
+    -
+      kind: PMC
+    -
+      kind: PIO
+      instance: [PIOA, PIOB, PIOC, PIOD]
+    -
+      kind: ADC
+    -
+      kind: SPI
+      instance: [SPI0]
+    -
+      kind: DACC
+    -
+      kind: TWI
+      instance: [TWI0, TWI1]
+    -
+      kind: PWM
+    -
+      kind: TC
+      instance: [TC0, TC1]

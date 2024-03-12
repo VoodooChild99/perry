@@ -83,6 +83,12 @@ peripheral_workload:
     constraint_file: perry-atsam4l-ek-hflashc.json
   -
     target: GPIO
+  -
+    target: SPI
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/spi.bc
+    target-struct: Spi
+    constraint_file: perry-atsam4l-ek-spi.json
 
 board_config:
   cpu: cortex-m4
@@ -120,3 +126,5 @@ board_config:
       kind: SCIF
     -
       kind: BSCIF
+    -
+      kind: SPI

@@ -17,6 +17,9 @@ bitcode:
   - ../../../../HAL-Collection/STM/STM32F407/build/libhal-STM32F407.bca
 
 peripheral_workload:
+  - 
+    target: DMA2
+    kind: DMA
   -
     target: PWR
     use-perry: true
@@ -35,6 +38,10 @@ peripheral_workload:
     constraint_file: perry-stm32f4-rcc.json
   -
     target: TIM3
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32f4-tim.json
   -
     target: USART6
     kind: USART
@@ -69,6 +76,20 @@ peripheral_workload:
     constraint_file: perry-stm32f4-rtc.json
   -
     target: EXTI
+  -
+    target: I2C3
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32f4-i2c.json
+  -
+    target: ADC1
+    kind: ADC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F407/build/stm32f4xx_hal_adc.bc
+    target-struct: ADC_TypeDef
+    constraint_file: perry-stm32f4-adc.json
 
 board_config:
   cpu: cortex-m4
@@ -117,7 +138,11 @@ board_config:
 
   peripheral:
     -
+      kind: DMA
+      instance: [DMA1, DMA2]
+    -
       kind: TIM3
+      instance: [TIM2, TIM3, TIM4, TIM5]
     -
       kind: USART
       instance: [USART1, USART2, USART3, USART6]
@@ -138,10 +163,16 @@ board_config:
       kind: RNG
     -
       kind: SPI
-      instance: [SPI1]
+      instance: [SPI1, SPI2, SPI3]
     -
       kind: SYSCFG
     -
       kind: RTC
     -
       kind: EXTI
+    -
+      kind: I2C
+      instance: [I2C1, I2C2, I2C3]
+    -
+      kind: ADC
+      instance: [ADC1, ADC2, ADC3]

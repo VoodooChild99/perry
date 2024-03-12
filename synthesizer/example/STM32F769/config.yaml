@@ -30,10 +30,15 @@ peripheral_workload:
     constraint_file: perry-stm32f7-rcc.json
   -
     target: TIM3
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32f7-tim.json
   -
     target: USART6
     kind: USART
     use-perry: true
+    partial-concretize: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_uart.bc
     target-struct: USART_TypeDef
     constraint_file: perry-stm32f7-usart.json
@@ -56,6 +61,18 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f7-spi.json
+  -
+    target: I2C1
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F769/build/stm32f7xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32f7-i2c.json
+  -
+    target: DMA2
+    kind: DMA
+  -
+    target: FMC
 
 board_config:
   cpu: cortex-m7
@@ -86,6 +103,11 @@ board_config:
       base: 0x20000000
       size: 0x00040000
       type: ram
+    -
+      name: sdram
+      base: 0xc0000000
+      size: 0x1000000
+      type: ram
 
   peripheral:
     -
@@ -105,7 +127,7 @@ board_config:
       kind: GPIOB
     -
       kind: GPIOD
-      instance: [GPIOC, GPIOD, GPIOE, GPIOF, GPIOG]
+      instance: [GPIOC, GPIOD, GPIOE, GPIOF, GPIOG, GPIOH, GPIOI]
     -
       kind: RNG
     -
@@ -113,3 +135,11 @@ board_config:
       instance: [SPI1]
     -
       kind: SYSCFG
+    -
+      kind: DMA
+      instance: [DMA1, DMA2]
+    -
+      kind: FMC
+    -
+      kind: I2C
+      instance: [I2C1]

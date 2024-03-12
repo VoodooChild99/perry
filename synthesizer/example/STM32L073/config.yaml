@@ -21,6 +21,13 @@ loop-file: ./loops.yaml
 
 peripheral_workload:
   -
+    target: DMA1
+    kind: DMA
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_dma.bc
+    target-struct: DMA_TypeDef
+    constraint_file: perry-stm32l0-dma.json
+  -
     target: PWR
     use-perry: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_pwr_ex.bc
@@ -31,6 +38,7 @@ peripheral_workload:
   -
     target: RCC
     use-perry: true
+    partial-concretize: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_rcc.bc
     target-struct: RCC_TypeDef
     constraint_file: perry-stm32l0-rcc.json
@@ -38,10 +46,15 @@ peripheral_workload:
     target: SYSCFG
   -
     target: TIM2
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32l0-tim.json
   -
     target: USART1
     kind: USART
     use-perry: true
+    partial-concretize: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_uart.bc
     target-struct: USART_TypeDef
     constraint_file: perry-stm32l0-usart.json
@@ -56,6 +69,33 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32l0-spi.json
+  -
+    target: RTC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_rtc.bc
+    target-struct: RTC_TypeDef
+    constraint_file: perry-stm32l0-rtc.json
+  -
+    target: EXTI
+  -
+    target: I2C1
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32l0-i2c.json
+  -
+    target: LPTIM
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32L073/build/stm32l0xx_hal_lptim.bc
+    target-struct: LPTIM_TypeDef
+    constraint_file: perry-stm32l0-lptim.json
+  -
+    target: DBGMCU
+  -
+    target: CRC
+  -
+    target: IWDG
 
 board_config:
   cpu: cortex-m0
@@ -99,11 +139,14 @@ board_config:
 
   peripheral:
     -
+      kind: DMA
+      instance: [DMA1]
+    -
       kind: TIM2
       instance: [TIM3]
     -
       kind: USART
-      instance: [USART2]
+      instance: [USART1, USART2, LPUSART1]
     -
       kind: PWR
     -
@@ -120,3 +163,18 @@ board_config:
     -
       kind: SPI
       instance: [SPI1, SPI2]
+    -
+      kind: RTC
+    -
+      kind: EXTI
+    -
+      kind: I2C
+      instance: [I2C1, I2C2]
+    -
+      kind: LPTIM
+    -
+      kind: DBGMCU
+    -
+      kind: CRC
+    -
+      kind: IWDG

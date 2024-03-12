@@ -69,12 +69,43 @@ peripheral_workload:
   -
     target: PIOA
     kind: PIO
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/pio_handler.bc
+    target-struct: Pio
+    constraint_file: perry-atsam4s-xplained-pio.json
   -
     target: EFC0
   -
     target: WDT
   -
     target: SMC
+  -
+    target: TWI0
+    kind: TWI
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/twi.bc
+    target-struct: Twi
+    constraint_file: perry-atsam4s-xplained-twi.json
+  -
+    target: SPI
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/spi.bc
+    target-struct: Spi
+    constraint_file: perry-atsam4s-xplained-spi.json
+  -
+    target: ADC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/adc.bc
+    target-struct: Adc
+    constraint_file: perry-atsam4s-xplained-adc.json
+  -
+    target: DACC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/dacc.bc
+    target-struct: Dacc
+    constraint_file: perry-atsam4s-xplained-dac.json
+
+
 
 board_config:
   cpu: cortex-m4
@@ -116,3 +147,12 @@ board_config:
       kind: WDT
     -
       kind: SMC
+    -
+      kind: ADC
+    -
+      kind: SPI
+    -
+      kind: DACC
+    -
+      kind: TWI
+      instance: [TWI0]

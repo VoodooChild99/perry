@@ -63,8 +63,44 @@ peripheral_workload:
   -
     target: PORTA
     kind: PORT
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_adapter_gpio.c.obj
+    target-struct: PORT_Type
+    constraint_file: perry-nxp-frdm-k64f-port.json
   -
     target: LPTMR0
+  -
+    target: SMC
+  -
+    target: PIT
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_adapter_pit.c.obj
+    target-struct: PIT_Type
+    constraint_file: perry-nxp-frdm-k64f-pit.json
+  -
+    target: ADC0
+    kind: ADC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_adc16.c.obj
+    target-struct: ADC_Type
+    constraint_file: perry-nxp-frdm-k64f-adc.json
+  -
+    target: DAC0
+    kind: DAC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_dac.c.obj
+    target-struct: DAC_Type
+    constraint_file: perry-nxp-frdm-k64f-dac.json
+  -
+    target: I2C0
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_i2c.c.obj
+    target-struct: I2C_Type
+    constraint_file: perry-nxp-frdm-k64f-i2c.json
+  -
+    target: FTM0
+    kind: FTM
 
 board_config:
   cpu: cortex-m4
@@ -117,3 +153,22 @@ board_config:
       instance: [PORTA, PORTB, PORTC, PORTD, PORTE]
     -
       kind: LPTMR0
+    -
+      kind: SMC
+    -
+      kind: ADC
+      instance: [ADC0, ADC1]
+    -
+      kind: DAC
+      instance: [DAC0, DAC1]
+    -
+      kind: SPI
+      instance: [SPI0, SPI1, SPI2]
+    -
+      kind: I2C
+      instance: [I2C0, I2C1, I2C2]
+    -
+      kind: FTM
+      instance: [FTM0, FTM1, FTM2, FTM3]
+    -
+      kind: PIT

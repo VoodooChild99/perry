@@ -18,6 +18,13 @@ loop-file: ./loops.yaml
 
 peripheral_workload:
   -
+    target: DMA1
+    kind: DMA
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_dma.bc
+    target-struct: DMA_TypeDef
+    constraint_file: perry-stm32f1-dma.json
+  -
     target: PWR
     use-perry: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_pwr.bc
@@ -25,6 +32,10 @@ peripheral_workload:
     constraint_file: perry-stm32f1-pwr.json
   -
     target: FLASH
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_flash_ex.bc
+    target-struct: FLASH_TypeDef
+    constraint_file: perry-stm32f1-flash.json
   -
     target: RCC
     use-perry: true
@@ -33,10 +44,24 @@ peripheral_workload:
     constraint_file: perry-stm32f1-rcc.json
   -
     target: TIM2
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32f1-tim2.json
+  -
+    target: TIM1
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32f1-tim1.json
   -
     target: AFIO
   -
     target: EXTI
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_exti.bc
+    target-struct: EXTI_TypeDef
+    constraint_file: perry-stm32f1-exti.json
   -
     target: USART1
     kind: USART
@@ -53,6 +78,22 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f1-spi.json
+  -
+    target: I2C1
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32f1-i2c.json
+  -
+    target: ADC1
+    kind: ADC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F103/build/stm32f1xx_hal_adc.bc
+    target-struct: ADC_TypeDef
+    constraint_file: perry-stm32f1-adc.json
+  -
+    target: IWDG
 
 board_config:
   cpu: cortex-m3
@@ -81,8 +122,17 @@ board_config:
 
   peripheral:
     -
+      kind: DMA
+      instance: [DMA1, DMA2]
+    -
       kind: TIM2
-      instance: [TIM3]
+      instance: [TIM2, TIM3, TIM4, TIM5]
+    -
+      kind: TIM1
+      instance: [TIM1]
+    -
+      kind: ADC
+      instance: [ADC1, ADC2]
     -
       kind: USART
       instance: [USART1, USART2]
@@ -102,3 +152,8 @@ board_config:
     -
       kind: SPI
       instance: [SPI1, SPI2, SPI3]
+    -
+      kind: I2C
+      instance: [I2C1, I2C2]
+    -
+      kind: IWDG

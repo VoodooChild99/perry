@@ -21,6 +21,12 @@ additional-peripheral:
 
 peripheral_workload:
   -
+    target: DMA
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_dma.bc
+    target-struct: DMA_TypeDef
+    constraint_file: perry-stm32f0-dma.json
+  -
     target: PWR
     use-perry: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_pwr_ex.bc
@@ -38,10 +44,15 @@ peripheral_workload:
     target: SYSCFG
   -
     target: TIM2
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_tim.bc
+    target-struct: TIM_TypeDef
+    constraint_file: perry-stm32f0-tim.json
   -
     target: USART1
     kind: USART
     use-perry: true
+    partial-concretize: true
     target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_uart.bc
     target-struct: USART_TypeDef
     constraint_file: perry-stm32f0-usart.json
@@ -56,6 +67,13 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_spi.bc
     target-struct: SPI_TypeDef
     constraint_file: perry-stm32f0-spi.json
+  -
+    target: I2C1
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/STM/STM32F072/build/stm32f0xx_hal_i2c.bc
+    target-struct: I2C_TypeDef
+    constraint_file: perry-stm32f0-i2c.json
 
 board_config:
   cpu: cortex-m0
@@ -89,11 +107,13 @@ board_config:
 
   peripheral:
     -
+      kind: DMA
+    -
       kind: TIM2
-      instance: [TIM3]
+      instance: [TIM2, TIM3]
     -
       kind: USART
-      instance: [USART1, USART2]
+      instance: [USART1, USART2, USART3]
     -
       kind: PWR
     -
@@ -110,3 +130,6 @@ board_config:
     -
       kind: SPI
       instance: [SPI1, SPI2]
+    -
+      kind: I2C
+      instance: [I2C1, I2C2]

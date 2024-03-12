@@ -69,6 +69,10 @@ peripheral_workload:
   -
     target: PIOA
     kind: PIO
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/pio_handler.bc
+    target-struct: Pio
+    constraint_file: perry-atsamv71-xplained-ultra-pio.json
   -
     target: EFC
   -
@@ -79,6 +83,12 @@ peripheral_workload:
     target: CHIPID
   -
     target: MATRIX
+  -
+    target: DACC
+    use-perry: true
+    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/dacc.bc
+    target-struct: Dacc
+    constraint_file: perry-atsamv71-xplained-ultra-dac.json
 
 board_config:
   cpu: cortex-m7
@@ -124,3 +134,5 @@ board_config:
       kind: CHIPID
     -
       kind: MATRIX
+    -
+      kind: DACC

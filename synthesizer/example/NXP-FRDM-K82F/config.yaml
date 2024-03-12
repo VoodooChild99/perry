@@ -62,6 +62,34 @@ peripheral_workload:
     kind: PORT
   -
     target: SYSMPU
+  -
+    target: PIT0
+    kind: PIT
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_pit.c.obj
+    target-struct: PIT_Type
+    constraint_file: perry-nxp-frdm-k82f-pit.json
+  -
+    target: ADC0
+    kind: ADC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_adc16.c.obj
+    target-struct: ADC_Type
+    constraint_file: perry-nxp-frdm-k82f-adc.json
+  -
+    target: DAC0
+    kind: DAC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_dac.c.obj
+    target-struct: DAC_Type
+    constraint_file: perry-nxp-frdm-k82f-dac.json
+  -
+    target: I2C0
+    kind: I2C
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/fsl_i2c.c.obj
+    target-struct: I2C_Type
+    constraint_file: perry-nxp-frdm-k82f-i2c.json
 
 board_config:
   cpu: cortex-m4
@@ -112,3 +140,18 @@ board_config:
       instance: [PORTA, PORTB, PORTC, PORTD, PORTE]
     -
       kind: SYSMPU
+    -
+      kind: ADC
+      instance: [ADC0]
+    -
+      kind: DAC
+      instance: [DAC0]
+    -
+      kind: SPI
+      instance: [SPI0]
+    -
+      kind: I2C
+      instance: [I2C0]
+    -
+      kind: PIT
+      instance: [PIT0]
