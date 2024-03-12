@@ -2,11 +2,11 @@
 #define KLEE_TAINT_H
 
 #include <set>
-#include <unordered_set>
+#include <stdint.h>
 
 namespace klee {
   using TaintTy = uint64_t;
-  using TaintSet = std::unordered_set<TaintTy>;
+  using TaintSet = std::set<TaintTy>;
 
   // return true iff `ts` is not empty (i.e., at least one taint)
   bool isTainted(TaintSet& ts);
