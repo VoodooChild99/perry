@@ -1814,8 +1814,9 @@ static void {0}(void *opaque) {{
 }}
 """
     set_irq_expr = ''
-    for e in self.__z3_expr_to_reg(self.timer_irq_constraints, True):
-      set_irq_expr += e
+    if self.timer_irq_constraints is not None:
+      for e in self.__z3_expr_to_reg(self.timer_irq_constraints, True):
+        set_irq_expr += e
     if self.time_scale is None:
       time_scale = DEFAULT_TIME_SCALE
     else:
