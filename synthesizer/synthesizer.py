@@ -982,7 +982,12 @@ class Synthesizer:
     else:
       return None
   
-  def __z3_expr_to_cond(self, expr: ExprRef, value:str="") -> str:
+  def __z3_expr_to_cond(
+    self,
+    expr: ExprRef,
+    value: str = "",
+    elms: Set[str] = None,
+  ) -> str:
     # what do we support: and, or, xor, not, eq, extract
     # traverse the tree
     class StackCell:
@@ -1085,6 +1090,8 @@ class Synthesizer:
             lhs = '{}->{}'.format(self.periph_instance_name, target_reg.name)
           if is_const(left):
             tmp = '({} == {})'.format(lhs, hex(right_val))
+            if elms is not None:
+              elms.add(tmp)
           else:
             extract_high, extract_low = left.params()
             mask = 0
@@ -1096,6 +1103,8 @@ class Synthesizer:
             else:
               assert(right_val == 0)
               tmp = '(!({} & {}))'.format(lhs, hex(mask))
+            if elms is not None:
+              elms.add('({} & {})'.format(lhs, hex(mask)))
           sub_expr.append(tmp)
     assert(len(sub_expr) == 1)
     return sub_expr.pop()
@@ -2335,18 +2344,68 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
           self.transmit_func_name, self.periph_instance_name
         )
       if r.address_offset in self.reg_offset_to_cond_actions:
+        ac_triples = []
         for pair in self.reg_offset_to_cond_actions[r.address_offset]:
           for ro in pair[2]:
             if ro in self.irq_reg_offset:
               do_irq_update = True
-          c_cond = self.__z3_expr_to_cond(pair[0], "value")
+          elms = set()
+          c_cond = self.__z3_expr_to_cond(pair[0], "value", elms)
           c_action = self.__z3_expr_to_reg(pair[1], True)
           if len(c_action) > 0:
+            ac_triples.append((c_cond, c_action, elms))
+        # group cond actions
+        ac_groups = []
+        for tp in ac_triples:
+          elms = tp[2]
+          found_flag = False
+          if len(ac_groups) == 0:
+            ac_groups.append([tp])
+            continue
+          for g in ac_groups:
+            for itp in g:
+              for e in elms:
+                if e in itp[2]:
+                  g.append(tp)
+                  found_flag = True
+                  break
+              if found_flag:
+                break
+            if found_flag:
+              break
+          if not found_flag:
+            ac_groups.append([tp])
+        # sort within groups by number of elms 
+        for g in ac_groups:
+          g.sort(key=lambda y: len(y[2]), reverse=True)
+        # Not emit them
+        for g in ac_groups:
+          num_tps = len(g)
+          for idx, tp in enumerate(g):
+            c_cond = tp[0]
+            c_action = tp[1]
             if len(c_cond) > 0:
-              content += '\t\t\tif ({}) {{\n'.format(c_cond)
-              for ca in c_action:
-                content += '\t\t\t\t{}\n'.format(ca)
-              content += '\t\t\t}\n'
+              if num_tps > 1:
+                if idx == 0:
+                  content += '\t\t\tif ({}) {{\n'.format(c_cond)
+                  for ca in c_action:
+                    content += '\t\t\t\t{}\n'.format(ca)
+                  content += '\t\t\t} else '
+                elif idx < num_tps - 1:
+                  content += 'if ({}) {{\n'.format(c_cond)
+                  for ca in c_action:
+                    content += '\t\t\t\t{}\n'.format(ca)
+                  content += '\t\t\t} else '
+                else:
+                  content += 'if ({}) {{\n'.format(c_cond)
+                  for ca in c_action:
+                    content += '\t\t\t\t{}\n'.format(ca)
+                  content += '\t\t\t}\n'
+              else:
+                content += '\t\t\tif ({}) {{\n'.format(c_cond)
+                for ca in c_action:
+                  content += '\t\t\t\t{}\n'.format(ca)
+                content += '\t\t\t}\n'
             else:
               for ca in c_action:
                 content += '\t\t\t{}\n'.format(ca)
