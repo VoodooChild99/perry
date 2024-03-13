@@ -1570,6 +1570,8 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
     do_update_expr = ''
     if self.has_update_func:
       do_update_expr += '\t{}({});'.format(self.update_func_name, self.periph_instance_name)
+    if len(content) == 0 and len(do_update_expr) == 0:
+      content = '\t(void){};\n'.format(self.periph_instance_name)
     body = body.format(
       self.receive_func_name,
       self.struct_name,
@@ -1733,6 +1735,7 @@ typedef struct {{
       self.has_update_func = True
       body = \
 """
+__attribute__((unused))
 static void {0}({1} *{2}, int channel_idx, int level) {{
 \tqemu_set_irq({2}->irq[channel_idx], level);
 }}
@@ -1746,6 +1749,7 @@ static void {0}({1} *{2}, int channel_idx, int level) {{
       return ''
     body = \
 """
+__attribute__((unused))
 static void {0}({1} *{2}) {{
 \tint conditions = {3};
 \tqemu_set_irq({2}->irq[0], conditions);
