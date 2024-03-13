@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAM4L-EK/libhal-SAM4LC4C.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAM4L-EK/libhal-SAM4LC4C.flash.a.bca
 
 loop-file: ./loops.yaml
 
@@ -48,37 +48,37 @@ peripheral_workload:
     target: USART0
     kind: USART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/usart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/usart.bc
     target-struct: Usart
     constraint_file: perry-atsam4l-ek-usart.json
   -
     target: HCACHE
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/flashcalw.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/flashcalw.bc
     target-struct: Hcache
     constraint_file: perry-atsam4l-ek-hcache.json
   -
     target: SCIF
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/sysclk.bc
     target-struct: Scif
     constraint_file: perry-atsam4l-ek-scif.json
   -
     target: BSCIF
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/sysclk.bc
     target-struct: Bscif
     constraint_file: perry-atsam4l-ek-bscif.json
   -
     target: PM
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/sysclk.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/sysclk.bc
     target-struct: Pm
     constraint_file: perry-atsam4l-ek-pm.json
   -
     target: HFLASHC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/flashcalw.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/flashcalw.bc
     target-struct: Flashcalw
     constraint_file: perry-atsam4l-ek-hflashc.json
   -
@@ -86,7 +86,7 @@ peripheral_workload:
   -
     target: SPI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4L-EK/spi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/spi.bc
     target-struct: Spi
     constraint_file: perry-atsam4l-ek-spi.json
 

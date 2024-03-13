@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAM3X8E/libhal-SAM3X8E.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAM3X8E/libhal-SAM3X8E.flash.a.bca
 
 loop-file: ./loops.yaml
 
@@ -47,7 +47,7 @@ peripheral_workload:
   -
     target: UART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/uart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/uart.bc
     target-struct: Uart
     constraint_file: perry-atsam3x8e-uart.json
   -
@@ -61,20 +61,20 @@ peripheral_workload:
   -
     target: PMC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/pmc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/pmc.bc
     target-struct: Pmc
     constraint_file: perry-atsam3x8e-pmc.json
   -
     target: PIOA
     kind: PIO
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/pio_handler.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/pio_handler.bc
     target-struct: Pio
     constraint_file: perry-atsam3x8e-pio.json
   -
     target: ADC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/adc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/adc.bc
     target-struct: Adc
     constraint_file: perry-atsam3x8e-adc.json
   -
@@ -84,20 +84,20 @@ peripheral_workload:
     target: SPI0
     kind: SPI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/spi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/spi.bc
     target-struct: Spi
     constraint_file: perry-atsam3x8e-spi.json
   -
     target: DACC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/dacc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/dacc.bc
     target-struct: Dacc
     constraint_file: perry-atsam3x8e-dac.json
   -
     target: TWI0
     kind: TWI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM3X8E/twi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/twi.bc
     target-struct: Twi
     constraint_file: perry-atsam3x8e-twi.json
   -

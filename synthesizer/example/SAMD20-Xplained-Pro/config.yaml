@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/libhal-SAMD20J18.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAMD20-Xplained-Pro/libhal-SAMD20J18.flash.a.bca
 
 loop-file: ./loops.yaml
 success-ret-file: ./succ-ret.yaml
@@ -52,20 +52,20 @@ peripheral_workload:
   -
     target: SYSCTRL
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/clock.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMD20-Xplained-Pro/clock.bc
     target-struct: Sysctrl
     constraint_file: perry-atsamd20-xplained-pro-sysctrl.json
   -
     target: GCLK
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/gclk.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMD20-Xplained-Pro/gclk.bc
     target-struct: Gclk
     constraint_file: perry-atsamd20-xplained-pro-gclk.json
   -
     target: TC0
     kind: TC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMD20-Xplained-Pro/tc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMD20-Xplained-Pro/tc.bc
     target-struct: Tc
     constraint_file: perry-atsamd20-xplained-pro-tc.json
 

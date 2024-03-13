@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/libhal-SAMV71Q21B.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/libhal-SAMV71Q21B.flash.a.bca
 
 loop-file: ./loops.yaml
 
@@ -48,20 +48,20 @@ peripheral_workload:
     target: UART0
     kind: UART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/uart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/uart.bc
     target-struct: Uart
     constraint_file: perry-atsamv71-xplained-ultra-uart.json
   -
     target: USART0
     kind: USART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/usart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/usart.bc
     target-struct: Usart
     constraint_file: perry-atsamv71-xplained-ultra-usart.json
   -
     target: PMC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/pmc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/pmc.bc
     target-struct: Pmc
     constraint_file: perry-atsamv71-xplained-ultra-pmc.json
   -
@@ -70,7 +70,7 @@ peripheral_workload:
     target: PIOA
     kind: PIO
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/pio_handler.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/pio_handler.bc
     target-struct: Pio
     constraint_file: perry-atsamv71-xplained-ultra-pio.json
   -
@@ -86,7 +86,7 @@ peripheral_workload:
   -
     target: DACC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAMV71-Xplained-Ultra/dacc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAMV71-Xplained-Ultra/dacc.bc
     target-struct: Dacc
     constraint_file: perry-atsamv71-xplained-ultra-dac.json
 

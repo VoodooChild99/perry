@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/libhal-SAM4S16C.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/libhal-SAM4S16C.flash.a.bca
 
 loop-file: ./loops.yaml
 
@@ -48,20 +48,20 @@ peripheral_workload:
     target: UART0
     kind: UART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/uart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/uart.bc
     target-struct: Uart
     constraint_file: perry-atsam4s-xplained-uart.json
   -
     target: USART0
     kind: USART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/usart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/usart.bc
     target-struct: Usart
     constraint_file: perry-atsam4s-xplained-usart.json
   -
     target: PMC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/pmc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/pmc.bc
     target-struct: Pmc
     constraint_file: perry-atsam4s-xplained-pmc.json
   -
@@ -70,7 +70,7 @@ peripheral_workload:
     target: PIOA
     kind: PIO
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/pio_handler.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/pio_handler.bc
     target-struct: Pio
     constraint_file: perry-atsam4s-xplained-pio.json
   -
@@ -83,25 +83,25 @@ peripheral_workload:
     target: TWI0
     kind: TWI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/twi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/twi.bc
     target-struct: Twi
     constraint_file: perry-atsam4s-xplained-twi.json
   -
     target: SPI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/spi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/spi.bc
     target-struct: Spi
     constraint_file: perry-atsam4s-xplained-spi.json
   -
     target: ADC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/adc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/adc.bc
     target-struct: Adc
     constraint_file: perry-atsam4s-xplained-adc.json
   -
     target: DACC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAM4S-Xplained/dacc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/dacc.bc
     target-struct: Dacc
     constraint_file: perry-atsam4s-xplained-dac.json
 

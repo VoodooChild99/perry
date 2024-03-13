@@ -7,7 +7,7 @@ perry-path: ../../../build/bin/perry
 perry-memory-limit: 49152
 
 bitcode:
-  - ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/libhal-SAME70Q21B.flash.a.bca
+  - ../../../../HAL-Collection/SAM/build/SAME70-Xplained/libhal-SAME70Q21B.flash.a.bca
 
 loop-file: ./loops.yaml
 
@@ -48,20 +48,20 @@ peripheral_workload:
     target: UART0
     kind: UART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/uart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/uart.bc
     target-struct: Uart
     constraint_file: perry-atsame70-xplained-uart.json
   -
     target: USART0
     kind: USART
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/usart.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/usart.bc
     target-struct: Usart
     constraint_file: perry-atsame70-xplained-usart.json
   -
     target: PMC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/pmc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/pmc.bc
     target-struct: Pmc
     constraint_file: perry-atsame70-xplained-pmc.json
   -
@@ -70,7 +70,7 @@ peripheral_workload:
     target: PIOA
     kind: PIO
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/pio_handler.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/pio_handler.bc
     target-struct: Pio
     constraint_file: perry-atsame70-xplained-pio.json
   -
@@ -86,14 +86,14 @@ peripheral_workload:
   -
     target: DACC
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/dacc.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/dacc.bc
     target-struct: Dacc
     constraint_file: perry-atsame70-xplained-dac.json
   -
     target: SPI0
     kind: SPI
     use-perry: true
-    target-bitcode: ../../../../xdk-asf-3.52.0/build/SAME70-Xplained/spi.bc
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAME70-Xplained/spi.bc
     target-struct: Spi
     constraint_file: perry-atsame70-xplained-spi.json
 
