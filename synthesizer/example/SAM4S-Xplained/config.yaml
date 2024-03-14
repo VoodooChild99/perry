@@ -51,6 +51,7 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/uart.bc
     target-struct: Uart
     constraint_file: perry-atsam4s-xplained-uart.json
+    exclude-irq-cond: true
   -
     target: USART0
     kind: USART
@@ -58,6 +59,7 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4S-Xplained/usart.bc
     target-struct: Usart
     constraint_file: perry-atsam4s-xplained-usart.json
+    exclude-irq-cond: true
   -
     target: PMC
     use-perry: true

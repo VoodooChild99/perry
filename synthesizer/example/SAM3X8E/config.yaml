@@ -50,6 +50,7 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/uart.bc
     target-struct: Uart
     constraint_file: perry-atsam3x8e-uart.json
+    exclude-irq-cond: true
   -
     target: RSTC
   -

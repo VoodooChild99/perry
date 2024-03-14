@@ -342,6 +342,12 @@ namespace {
   PerryFunctionHooks("perry-function-hook",
                      cl::desc("Functions to hook"),
                      cl::cat(MiscCat));
+  
+  cl::opt<bool>
+  DataRegIncludeIrqCond("perry-dr-include-irq",
+                        cl::desc("Whether to include interrupt conditions in data reg access conditions"),
+                        cl::init(true),
+                        cl::cat(MiscCat));
 }
 
 namespace klee {
@@ -2758,7 +2764,9 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           if (isIRQ) {
             isUniqueConstraints(unique_constraints_irq, RegConstraint);
           }
-          isUniqueConstraints(unique_constraints_read, RegConstraint);
+          if (DataRegIncludeIrqCond || !isIRQ) {
+            isUniqueConstraints(unique_constraints_read, RegConstraint);
+          }
         } else {
           writtenDataRegIdx.insert(cur_access->offset);
           hasWrite = true;
@@ -2791,7 +2799,9 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
           if (isIRQ) {
             isUniqueConstraints(unique_constraints_irq, RegConstraint);
           }
-          isUniqueConstraints(unique_constraints_write, RegConstraint);
+          if (DataRegIncludeIrqCond || !isIRQ) {
+            isUniqueConstraints(unique_constraints_write, RegConstraint);
+          }
         }
       }
 

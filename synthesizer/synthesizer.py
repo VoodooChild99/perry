@@ -3103,6 +3103,10 @@ type_init({0});
     if 'partial-concretize' in p:
       if p['partial-concretize']:
         addon_cmd.append("--perry-concretize-all=false")
+    
+    if 'exclude-irq-cond' in p:
+      if p['exclude-irq-cond']:
+        addon_cmd.append("--perry-dr-include-irq=false")
 
     bc_to_include = set(self.shared_bitcode)
     for abc in additional_bc:

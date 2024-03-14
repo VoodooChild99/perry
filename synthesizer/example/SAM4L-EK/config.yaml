@@ -51,6 +51,7 @@ peripheral_workload:
     target-bitcode: ../../../../HAL-Collection/SAM/build/SAM4L-EK/usart.bc
     target-struct: Usart
     constraint_file: perry-atsam4l-ek-usart.json
+    exclude-irq-cond: true
   -
     target: HCACHE
     use-perry: true
