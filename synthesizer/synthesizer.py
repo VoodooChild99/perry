@@ -401,6 +401,12 @@ class Synthesizer:
     self.dma_tx_disable_conds = None
     self.has_update_func = False
     self.has_transmit_func = False
+    self.is_gpio = False
+    for gpio_prefix in ['PIO', 'PORT', 'EXTI']:
+      _real_name = name if name is not None else target
+      if _real_name.startswith(gpio_prefix):
+        self.is_gpio = True
+        break
 
     if constraint_file is None:
       self.read_datareg_offset = []
@@ -856,6 +862,10 @@ class Synthesizer:
         else:
           for dci in self.dma_channel_infos[channel_idx]:
             dci.disable_cond = dec
+    if self.is_gpio:
+      self.gpio_regs = None
+      if self.irq_constraint is not None:
+        self.gpio_regs = self.__collect_related_regs(self.irq_constraint)
     # name
     if name is None or len(name) == 0:
       self.name = target
@@ -1329,7 +1339,7 @@ class Synthesizer:
     body = ''
     for item in self.header_include:
       body += '#include "{}"\n'.format(item)
-    if self.has_data_reg:
+    if self.has_data_reg or self.is_gpio:
       for item in self.chardev_include:
         body += '#include "{}"\n'.format(item)
     if self.eth_rx_desc_reg_offset is not None:
@@ -1371,6 +1381,7 @@ struct {0} {{
     if num_irq > 0:
       content += '\t/* irqs */\n'
       content += '\tqemu_irq irq[{}];\n\n'.format(num_irq)
+    self.periph_irq_num = num_irq
     # registers
     content += '\t/*registers*/\n'
     gened = set()
@@ -1392,6 +1403,9 @@ struct {0} {{
       content += '\t/* chardev backend */\n'
       content += '\tCharBackend chr;\n'
       content += '\tguint watch_tag;\n\n'
+    if self.is_gpio:
+      content += '\t/* chardev backend */\n'
+      content += '\tCharBackend chr;\n'
     if self.eth_rx_desc_reg_offset is not None:
       content += '\t/* Network backend */\n'
       content += '\tNICState *nic;\n'
@@ -1495,7 +1509,7 @@ static void {0}({1} *{2}) {{
     return body
   
   def _gen_src_can_receive(self) -> str:
-    if not self.has_data_reg:
+    if not (self.has_data_reg or self.is_gpio):
       return ''
     body = \
 """
@@ -1580,7 +1594,7 @@ if (({0}) && (t->{1} == addr || t->{2} == addr)) {{
         get_channel_exprs
       )
       return body
-    if not self.has_data_reg:
+    if not (self.has_data_reg or self.is_gpio):
       return ''
     body = \
 """
@@ -1611,6 +1625,12 @@ static void {0}(void *opaque, const uint8_t *buf, int size) {{
     if self.read_constraint is not None:
       for s in self.__z3_expr_to_reg(self.read_constraint, True, do_filter=True):
         content += '\t{}\n'.format(s)
+    if self.is_gpio:
+      if self.gpio_regs is not None:
+        for gr in self.gpio_regs:
+          content += '\t{0}->{1} = (1 << (*buf % 32));\n'.format(
+            self.periph_instance_name, self.offset_to_reg[gr].name
+          )
     do_update_expr = ''
     if self.has_update_func:
       do_update_expr += '\t{}({});'.format(self.update_func_name, self.periph_instance_name)
@@ -1796,15 +1816,25 @@ static void {0}({1} *{2}, int channel_idx, int level) {{
 __attribute__((unused))
 static void {0}({1} *{2}) {{
 \tint conditions = {3};
-\tqemu_set_irq({2}->irq[0], conditions);
+\tqemu_set_irq({2}->irq[{5}], conditions);
+{4}
 }}
 """
     irq_condition = self.__z3_expr_to_cond(self.irq_constraint)
+    additional = ''
+    if self.is_gpio:
+      for i in range(self.periph_irq_num - 1):
+        additional += '\tqemu_set_irq({}->irq[{}], conditions);\n'.format(self.periph_instance_name, i + 1)
+      for i in range(self.periph_irq_num):
+        additional += '\tqemu_set_irq({}->irq[{}], 0);\n'.format(self.periph_instance_name, i)
+    irq_idx = 1 if self.has_data_reg and self.periph_irq_num > 2 else 0
     body = body.format(
       self.update_func_name,
       self.struct_name,
       self.periph_instance_name,
-      irq_condition
+      irq_condition,
+      additional,
+      irq_idx
     )
     self.has_update_func = True
     return body
@@ -2398,6 +2428,8 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\t\t{}->{} &= value;\n'.format(
           self.periph_instance_name, r.name
         )
+      elif self.is_gpio and self.gpio_regs is not None and r.address_offset in self.gpio_regs:
+        pass
       else:
         content += '\t\t\t{}->{} = value;\n'.format(
           self.periph_instance_name, r.name
@@ -2474,7 +2506,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
               for ca in c_action:
                 content += '\t\t\t{}\n'.format(ca)
           
-      if r.address_offset in self.irq_reg_offset:
+      if r.address_offset in self.irq_reg_offset and not self.is_gpio:
         do_irq_update = True
 
       if do_irq_update and self.has_update_func and self.dma_channel_infos is None:
@@ -2646,7 +2678,7 @@ static void {0}(DeviceState *dev, Error **errp) {{
 }}
 """
     content = ''
-    if self.has_data_reg:
+    if self.has_data_reg or self.is_gpio:
       content += '\t{} *{} = {}(dev);\n\n'.format(
         self.struct_name, self.periph_instance_name, self.full_name_upper
       )
@@ -2740,7 +2772,7 @@ static Property {0}[] = {{
 """
       body = body.format(self.properties_struct_name, self.struct_name)
       return body
-    if not self.has_data_reg:
+    if not (self.has_data_reg or self.is_gpio):
       return ''
     body = \
 """
@@ -2765,7 +2797,7 @@ static void {0}(ObjectClass *oc, void *data) {{
 }}
 """
     content = ''
-    if self.has_data_reg or self.eth_rx_desc_reg_offset is not None:
+    if self.has_data_reg or self.is_gpio or self.eth_rx_desc_reg_offset is not None:
       content += '\tdevice_class_set_props(dc, {});\n'.format(
         self.properties_struct_name
       )
@@ -3283,7 +3315,7 @@ type_init({0});
       if use_perry and run_perry:
         self.__run_perry(p)
       self.__setup_peripheral_ctx(p_target, p_name, p_constraint_file)
-      if self.has_data_reg:
+      if self.has_data_reg or self.is_gpio:
         the_name = p_target if p_name is None else p_name
         self.data_reg_periph.add(the_name)
       hd = self._gen_header()
