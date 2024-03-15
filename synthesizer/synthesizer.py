@@ -607,7 +607,7 @@ class Synthesizer:
           self.dma_rx_enable_conds = None
         else:
           assert(len(exprs) == 1)
-          self.dma_rx_enable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+          self.dma_rx_enable_conds: ExprRef = exprs[0]
       if 'dma_rx_disable_conds' in loaded_json:
         s1 = Solver()
         s1.from_string(loaded_json['dma_rx_disable_conds'])
@@ -616,7 +616,7 @@ class Synthesizer:
           self.dma_rx_disable_conds = None
         else:
           assert(len(exprs) == 1)
-          self.dma_rx_disable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+          self.dma_rx_disable_conds: ExprRef = exprs[0]
       if 'dma_tx_enable_conds' in loaded_json:
         s1 = Solver()
         s1.from_string(loaded_json['dma_tx_enable_conds'])
@@ -625,7 +625,7 @@ class Synthesizer:
           self.dma_tx_enable_conds = None
         else:
           assert(len(exprs) == 1)
-          self.dma_tx_enable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+          self.dma_tx_enable_conds: ExprRef = exprs[0]
       if 'dma_tx_disable_conds' in loaded_json:
         s1 = Solver()
         s1.from_string(loaded_json['dma_tx_disable_conds'])
@@ -634,7 +634,7 @@ class Synthesizer:
           self.dma_tx_disable_conds = None
         else:
           assert(len(exprs) == 1)
-          self.dma_tx_disable_conds: ExprRef = self.__normalize_constraint(exprs[0])
+          self.dma_tx_disable_conds: ExprRef = exprs[0]
     ############
     ### Misc ###
     ############
@@ -692,6 +692,10 @@ class Synthesizer:
     ########################
     # normalize constraint #
     ########################
+    self.dma_rx_enable_conds = self.__normalize_constraint(self.dma_rx_enable_conds)
+    self.dma_rx_disable_conds = self.__normalize_constraint(self.dma_rx_disable_conds)
+    self.dma_tx_enable_conds = self.__normalize_constraint(self.dma_tx_enable_conds)
+    self.dma_tx_disable_conds = self.__normalize_constraint(self.dma_tx_disable_conds)
     if self.timer_disable_constraints is not None:
       self.timer_disable_constraints = [self.__normalize_constraint(x) for x in self.timer_disable_constraints]
     if self.timer_enable_constraints is not None:
