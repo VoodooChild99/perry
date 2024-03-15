@@ -20,11 +20,16 @@ bitcode:
 peripheral_workload:
   -
     target: UART0
-    kind: UART
     use-perry: true
     target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_uart.c.obj
     target-struct: UART_Type
-    constraint_file: perry-nxp-frdm-k64f-usart.json
+    constraint_file: perry-nxp-frdm-k64f-usart0.json
+  -
+    target: UART3
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_uart.c.obj
+    target-struct: UART_Type
+    constraint_file: perry-nxp-frdm-k64f-usart3.json
   -
     target: SPI0
     kind: SPI
@@ -129,8 +134,9 @@ board_config:
 
   peripheral:
     -
-      kind: UART
-      instance: [UART0, UART3]
+      kind: UART0
+    -
+      kind: UART3
     -
       kind: WDOG
     -
