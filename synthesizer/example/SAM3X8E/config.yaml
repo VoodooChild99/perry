@@ -81,6 +81,10 @@ peripheral_workload:
   -
     target: TC1
     kind: TC
+    use-perry: true
+    target-bitcode: ../../../../HAL-Collection/SAM/build/SAM3X8E/tc.bc
+    target-struct: Tc
+    constraint_file: perry-atsam3x8e-tc.json
   -
     target: SPI0
     kind: SPI
