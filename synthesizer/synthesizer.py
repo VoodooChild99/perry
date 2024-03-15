@@ -531,26 +531,56 @@ class Synthesizer:
           self.eth_last_desc_constraints: ExprRef = exprs[0]
       if 'timer_period_reg_offset' in loaded_json:
         self.timer_period_reg_offset = loaded_json['timer_period_reg_offset']
+        if isinstance(self.timer_period_reg_offset, int):
+          self.timer_period_reg_offset = [self.timer_period_reg_offset]
       if 'timer_counter_reg_offset' in loaded_json:
         self.timer_counter_reg_offset = loaded_json['timer_counter_reg_offset']
+        if isinstance(self.timer_counter_reg_offset, int):
+          self.timer_counter_reg_offset = [self.timer_counter_reg_offset]
       if 'timer_enable_action' in loaded_json:
-        s1 = Solver()
-        s1.from_string(loaded_json['timer_enable_action'])
-        exprs = s1.assertions();
-        if len(exprs) == 0:
-          self.timer_enable_constraints = None
+        if isinstance(loaded_json['timer_enable_action'], str):
+          s1 = Solver()
+          s1.from_string(loaded_json['timer_enable_action'])
+          exprs = s1.assertions();
+          if len(exprs) == 0:
+            self.timer_enable_constraints = None
+          else:
+            assert(len(exprs) == 1)
+            self.timer_enable_constraints: List[ExprRef] = [exprs[0]]
         else:
-          assert(len(exprs) == 1)
-          self.timer_enable_constraints: ExprRef = exprs[0]
+          assert(isinstance(loaded_json['timer_enable_action'], list))
+          self.timer_enable_constraints: List[ExprRef] = []
+          for sub_action in loaded_json['timer_enable_action']:
+            s1 = Solver()
+            s1.from_string(sub_action)
+            exprs = s1.assertions();
+            if len(exprs) == 0:
+              self.timer_enable_constraints = None
+            else:
+              assert(len(exprs) == 1)
+              self.timer_enable_constraints.append(exprs[0])
       if 'timer_disable_action' in loaded_json:
-        s1 = Solver()
-        s1.from_string(loaded_json['timer_disable_action'])
-        exprs = s1.assertions();
-        if len(exprs) == 0:
-          self.timer_disable_constraints = None
+        if isinstance(loaded_json['timer_disable_action'], str):
+          s1 = Solver()
+          s1.from_string(loaded_json['timer_disable_action'])
+          exprs = s1.assertions();
+          if len(exprs) == 0:
+            self.timer_disable_constraints = None
+          else:
+            assert(len(exprs) == 1)
+            self.timer_disable_constraints: List[ExprRef] = [exprs[0]]
         else:
-          assert(len(exprs) == 1)
-          self.timer_disable_constraints: ExprRef = exprs[0]
+          assert(isinstance(loaded_json['timer_disable_action'], list))
+          self.timer_disable_constraints: List[ExprRef] = []
+          for sub_action in loaded_json['timer_disable_action']:
+            s1 = Solver()
+            s1.from_string(sub_action)
+            exprs = s1.assertions();
+            if len(exprs) == 0:
+              self.timer_disable_constraints = None
+            else:
+              assert(len(exprs) == 1)
+              self.timer_disable_constraints.append(exprs[0])
       if 'timer_irq_cond' in loaded_json:
         s1 = Solver()
         s1.from_string(loaded_json['timer_irq_cond'])
@@ -662,6 +692,10 @@ class Synthesizer:
     ########################
     # normalize constraint #
     ########################
+    if self.timer_disable_constraints is not None:
+      self.timer_disable_constraints = [self.__normalize_constraint(x) for x in self.timer_disable_constraints]
+    if self.timer_enable_constraints is not None:
+      self.timer_enable_constraints = [self.__normalize_constraint(x) for x in self.timer_enable_constraints]
     self.read_constraint = self.__normalize_constraint(self.read_constraint)
     self.write_constraint = self.__normalize_constraint(self.write_constraint)
     self.between_writes_constraint = self.__normalize_constraint(
@@ -1365,8 +1399,11 @@ struct {0} {{
       content += '\tuint32_t cur_tx_descriptor;\n\n'
     if self.timer_counter_reg_offset is not None:
       content += '\t/* timer */\n'
-      content += '\tQEMUTimer *timer;\n'
-      content += '\tuint8_t enabled;\n\n'
+      content += '\tQEMUTimer *timers[{}];\n'.format(len(self.timer_period_reg_offset))
+      content += '\tuint8_t enabled[{}];\n\n'.format(len(self.timer_period_reg_offset))
+      content += '\tuint32_t cur_period[{}];\n\n'.format(len(self.timer_period_reg_offset))
+      content += '\tuint8_t period_set[{}];\n\n'.format(len(self.timer_period_reg_offset))
+      content += '\tuint8_t period_reg_set[{}];\n\n'.format(len(self.timer_period_reg_offset))
     if self.dma_struct_name is not None:
       if self.dma_rx_enable_conds is not None:
         content += '\t/* dma */\n'
@@ -1441,7 +1478,10 @@ static void {0}({1} *{2}) {{
     if self.eth_rx_desc_reg_offset is not None:
       content += '\t{0}->cur_rx_descriptor = 0;\n\t{0}->cur_tx_descriptor = 0;\n'.format(self.periph_instance_name)
     if self.timer_counter_reg_offset is not None:
-      content += '\t{}->enabled = 0;\n'.format(self.periph_instance_name)
+      for i in range(len(self.timer_counter_reg_offset)):
+        content += '\t{}->enabled[{}] = 0;\n'.format(self.periph_instance_name, i)
+        content += '\t{}->period_set[{}] = 0;\n'.format(self.periph_instance_name, i)
+        content += '\t{}->period_reg_set[{}] = 0;\n'.format(self.periph_instance_name, i)
     body = body.format(
       self.register_reset_func_name,
       self.struct_name,
@@ -1810,19 +1850,26 @@ static void {0}(void *opaque) {{
       return ''
     body = \
 """
-static void {0}(void *opaque) {{
+static void {0}_{6}(void *opaque) {{
+  static uint8_t period_reg_set_last = 0;
   {1} *t = ({1}*)opaque;
 
+  if (!period_reg_set_last && t->period_reg_set[{6}]) {{
+      period_reg_set_last = 1;
+      t->{2} = 0;
+  }}
   t->{2} += 1;
-  if (t->{2} == t->{3}) {{
+  unsigned prd = t->period_set[{6}] ? t->cur_period[{6}] : t->{3};
+  if (t->{2} == prd) {{
+    t->cur_period[{6}] = t->{3};
     t->{2} = 0;
     {4};
-    qemu_set_irq(t->irq[0], 1);
-    qemu_set_irq(t->irq[0], 0);
+    qemu_set_irq(t->irq[{6}], 1);
+    qemu_set_irq(t->irq[{6}], 0);
   }}
 
-  if (t->enabled) {{
-    timer_mod(t->timer, qemu_clock_get_{5}(QEMU_CLOCK_VIRTUAL) + 1);
+  if (t->enabled[{6}]) {{
+    timer_mod(t->timers[{6}], qemu_clock_get_{5}(QEMU_CLOCK_VIRTUAL) + 1);
   }}
 }}
 """
@@ -1830,20 +1877,29 @@ static void {0}(void *opaque) {{
     if self.timer_irq_constraints is not None:
       for e in self.__z3_expr_to_reg(self.timer_irq_constraints, True):
         set_irq_expr += e
+    else:
+      # back to default irq
+      if self.irq_constraint is not None:
+        for e in self.__z3_expr_to_reg(self.irq_constraint, True):
+          set_irq_expr += e
     if self.time_scale is None:
       time_scale = DEFAULT_TIME_SCALE
     else:
       time_scale = self.time_scale
 
-    body = body.format(
-      self.timer_callback_func_name,
-      self.struct_name,
-      self.offset_to_reg[self.timer_counter_reg_offset].name,
-      self.offset_to_reg[self.timer_period_reg_offset].name,
-      set_irq_expr,
-      time_scale
-    )
-    return body
+    ret = ''
+    for i in range(len(self.timer_period_reg_offset)):
+      ret += body.format(
+        self.timer_callback_func_name,
+        self.struct_name,
+        self.offset_to_reg[self.timer_counter_reg_offset[i]].name,
+        self.offset_to_reg[self.timer_period_reg_offset[i]].name,
+        set_irq_expr,
+        time_scale,
+        i
+      )
+      ret += "\n"
+    return ret
   
   def _gen_eth_can_receive_func(self) -> str:
     if self.eth_tx_desc_reg_offset is None:
@@ -2429,25 +2485,35 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\t\t{}->cur_tx_descriptor = value;\n'.format(
           self.periph_instance_name)
       if self.timer_counter_reg_offset is not None:
-        enable_reg = self.__collect_related_regs(self.timer_enable_constraints).pop()
-        disable_reg = self.__collect_related_regs(self.timer_disable_constraints).pop()
-        if self.time_scale is None:
-          time_scale = DEFAULT_TIME_SCALE
-        else:
-          time_scale = self.time_scale
-        if r.address_offset == enable_reg:
-          content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_enable_constraints))
-          content += '\t\t\t\t{}->enabled = 1;\n'.format(self.periph_instance_name)
-          content += '\t\t\t\ttimer_mod({}->timer, qemu_clock_get_{}(QEMU_CLOCK_VIRTUAL) + 1);\n'.format(self.periph_instance_name, time_scale)
-          content += '\t\t\t}\n'
-        if r.address_offset == disable_reg:
-          content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_disable_constraints))
-          content += '\t\t\t\t{}->enabled = 0;\n'.format(self.periph_instance_name)
-          content += '\t\t\t\ttimer_free({}->timer);\n'.format(self.periph_instance_name)
-          content += '\t\t\t\t{0}->timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}, {0});\n'.format(
-            self.periph_instance_name, time_scale.upper(),
-            self.timer_callback_func_name)
-          content += '\t\t\t}\n'
+        for i in range(len(self.timer_counter_reg_offset)):
+          enable_reg = self.__collect_related_regs(self.timer_enable_constraints[i]).pop()
+          disable_reg = self.__collect_related_regs(self.timer_disable_constraints[i]).pop()
+          period_reg = self.timer_period_reg_offset[i]
+          if self.time_scale is None:
+            time_scale = DEFAULT_TIME_SCALE
+          else:
+            time_scale = self.time_scale
+          if r.address_offset == enable_reg:
+            content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_enable_constraints[i]))
+            content += '\t\t\t\t{0}->period_set[{1}] = {0}->period_reg_set[{1}];\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t\t{}->enabled[{}] = 1;\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t\t{0}->cur_period[{1}] = {0}->{2};\n'.format(
+              self.periph_instance_name, i, self.offset_to_reg[self.timer_period_reg_offset[i]].name)
+            content += '\t\t\t\ttimer_mod({}->timers[{}], qemu_clock_get_{}(QEMU_CLOCK_VIRTUAL) + 1);\n'.format(
+              self.periph_instance_name, i, time_scale)
+            content += '\t\t\t}\n'
+          if r.address_offset == disable_reg:
+            content += '\t\t\tif ({}) {{\n'.format(self.__z3_expr_to_cond(self.timer_disable_constraints[i]))
+            content += '\t\t\t\t{}->enabled[{}] = 0;\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t\ttimer_free({}->timers[{}]);\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t\t{0}->timers[{3}] = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}_{3}, {0});\n'.format(
+              self.periph_instance_name, time_scale.upper(),
+              self.timer_callback_func_name, i)
+            content += '\t\t\t}\n'
+          if r.address_offset == period_reg:
+            content += '\t\t\tif (!{}->period_reg_set[{}]) {{\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t\t{}->period_reg_set[{}] = 1;\n'.format(self.periph_instance_name, i)
+            content += '\t\t\t}\n'
       if self.dma_channel_infos is not None:
         for idx in self.dma_channel_infos:
           dci = self.dma_channel_infos[idx][0]
@@ -2611,8 +2677,9 @@ static void {0}(DeviceState *dev, Error **errp) {{
         time_scale = self.time_scale
       content += '\t{0} *{1} = {2}(dev);\n'.format(
         self.struct_name, self.periph_instance_name, self.full_name_upper)
-      content += '\t{0}->timer = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}, {0});\n'.format(
-        self.periph_instance_name, time_scale.upper(), self.timer_callback_func_name)
+      for i in range(len(self.timer_period_reg_offset)):
+        content += '\t{0}->timers[{3}] = timer_new(QEMU_CLOCK_VIRTUAL, SCALE_{1}, {2}_{3}, {0});\n'.format(
+          self.periph_instance_name, time_scale.upper(), self.timer_callback_func_name, i)
     elif self.dma_rx_enable_conds is not None:
       content += '\t{0}->dma = NULL;\n'.format(self.periph_instance_name)
     else:

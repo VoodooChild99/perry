@@ -76,6 +76,7 @@
 #include <sstream>
 #include <regex>
 #include <tuple>
+#include <algorithm>
 
 using namespace llvm;
 using namespace klee;
@@ -2218,13 +2219,27 @@ inferRRDependenceWithCheckPoint(const PerryCheckPoint &cp,
   rrDepMap.at(key).insert(val);
 }
 
+static const std::vector<std::string> set_timer_period_funcs = {
+  "PIT_SetTimerPeriod",
+  "tc_set_period",
+};
+
+static const std::vector<std::string> access_timer_cnt_funcs = {
+  "PIT_GetCurrentTimerCount",
+  "tc_read_cv",
+};
+
 static const std::vector<std::string> timer_enable_funcs = {
   "LL_TIM_EnableCounter",
   "LL_LPTIM_Enable",
+  "PIT_StartTimer",
+  "tc_start",
 };
 
 static const std::vector<std::string> timer_disable_funcs = {
-  "LL_TIM_DisableCounter"
+  "LL_TIM_DisableCounter",
+  "PIT_StopTimer",
+  "tc_stop",
 };
 
 static const std::set<std::string> timer_irq_funcs = {
@@ -2318,6 +2333,8 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   std::vector<std::vector<ref<PerryExpr>>> timer_irq_conds;
   std::vector<std::vector<std::vector<ref<PerryExpr>>>> dma_xfer_cplt_irq_conds(32);
   std::map<std::tuple<unsigned, unsigned, unsigned>, z3::expr> final_src_dst;
+  std::vector<int> timer_period_regs;
+  std::vector<int> timer_cnt_regs;
 
   for (auto TopFunc : TopLevelFunctions) {
     assert(FunctionToSymbolName.find(TopFunc) != FunctionToSymbolName.end());
@@ -2596,9 +2613,59 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
     if (should_continue) {
       continue;
     }
+
+    for (auto &stp : set_timer_period_funcs) {
+      if (stp == TopFunc) {
+        if (perry_timer_info->period_reg_offset == -1) {
+          for (auto &rec : Record) {
+            auto &trace = rec.trace;
+            auto &reg_accesses = rec.register_accesses;
+            for (auto &PTI : trace) {
+              auto &cur_access = reg_accesses[PTI.reg_access_idx];
+              if (cur_access->AccessType != RegisterAccess::REG_WRITE) {
+                continue;
+              }
+              timer_period_regs.push_back(cur_access->offset);
+            }
+            std::sort(timer_period_regs.begin(), timer_period_regs.end());
+          }
+          should_continue = true;
+          break;
+        }
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
+
+    for (auto &atc : access_timer_cnt_funcs) {
+      if (atc == TopFunc) {
+        if (perry_timer_info->counter_reg_offset == -1) {
+          for (auto &rec : Record) {
+            auto &trace = rec.trace;
+            auto &reg_accesses = rec.register_accesses;
+            for (auto &PTI : trace) {
+              auto &cur_access = reg_accesses[PTI.reg_access_idx];
+              timer_cnt_regs.push_back(cur_access->offset);
+            }
+            std::sort(timer_cnt_regs.begin(), timer_cnt_regs.end());
+          }
+          should_continue = true;
+          break;
+        }
+      }
+    }
+
+    if (should_continue) {
+      continue;
+    }
     
     for (auto &tef : timer_enable_funcs) {
       if (tef == TopFunc) {
+        std::map<int, int> reg_offset_to_expr_idx;
+        std::vector<int> reg_offsets;
+        z3::expr_vector tmp_vec(z3builder.getContext());
         for (auto &rec : Record) {
           auto &trace = rec.trace;
           auto &reg_accesses = rec.register_accesses;
@@ -2616,7 +2683,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   z3builder.getContext().bool_val(true), sr,
                   empty_blacklist, bit_level_expr);
             bit_constraints = bit_constraints.simplify();
-            timer_enable_conds.push_back(bit_constraints);
+            reg_offset_to_expr_idx[cur_access->offset] = tmp_vec.size();
+            reg_offsets.push_back(cur_access->offset);
+            tmp_vec.push_back(bit_constraints);
+          }
+        }
+        if (!tmp_vec.empty()) {
+          std::sort(reg_offsets.begin(), reg_offsets.end());
+          for (auto ro : reg_offsets) {
+            timer_enable_conds.push_back(tmp_vec[reg_offset_to_expr_idx[ro]]);
           }
         }
         should_continue = true;
@@ -2630,6 +2705,9 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
 
     for (auto &tdf : timer_disable_funcs) {
       if (tdf == TopFunc) {
+        std::map<int, int> reg_offset_to_expr_idx;
+        std::vector<int> reg_offsets;
+        z3::expr_vector tmp_vec(z3builder.getContext());
         for (auto &rec : Record) {
           auto &trace = rec.trace;
           auto &reg_accesses = rec.register_accesses;
@@ -2647,7 +2725,15 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
                   z3builder.getContext().bool_val(true), sr,
                   empty_blacklist, bit_level_expr);
             bit_constraints = bit_constraints.simplify();
-            timer_disable_conds.push_back(bit_constraints);
+            reg_offset_to_expr_idx[cur_access->offset] = tmp_vec.size();
+            reg_offsets.push_back(cur_access->offset);
+            tmp_vec.push_back(bit_constraints);
+          }
+        }
+        if (!tmp_vec.empty()) {
+          std::sort(reg_offsets.begin(), reg_offsets.end());
+          for (auto ro : reg_offsets) {
+            timer_disable_conds.push_back(tmp_vec[reg_offset_to_expr_idx[ro]]);
           }
         }
         should_continue = true;
@@ -3739,46 +3825,108 @@ postProcess(const std::set<std::string> &TopLevelFunctions,
   }
 
   // write timer constraints, if any
-  if (perry_timer_info->counter_reg_offset != -1) {
+  if (perry_timer_info->counter_reg_offset != -1 || !timer_cnt_regs.empty()) {
     OutContent += ",\n";
 
     OutContent += "\t\"timer_period_reg_offset\": ";
-    OutContent += std::to_string(perry_timer_info->period_reg_offset);
+    if (perry_timer_info->period_reg_offset != -1) {
+      OutContent += std::to_string(perry_timer_info->period_reg_offset);
+    } else {
+      OutContent += "[";
+      auto num_period_regs = timer_period_regs.size();
+      for (unsigned i = 0; i < num_period_regs; ++i) {
+        OutContent += std::to_string(timer_period_regs[i]);
+        if (i != num_period_regs - 1) {
+          OutContent += ", ";
+        }
+      }
+      OutContent += "]";
+    }
     OutContent += ",\n";
 
     OutContent += "\t\"timer_counter_reg_offset\": ";
-    OutContent += std::to_string(perry_timer_info->counter_reg_offset);
+    if (perry_timer_info->counter_reg_offset != -1) {
+      OutContent += std::to_string(perry_timer_info->counter_reg_offset);
+    } else {
+      OutContent += "[";
+      auto num_cnt_regs = timer_cnt_regs.size();
+      for (unsigned i = 0; i < num_cnt_regs; ++i) {
+        OutContent += std::to_string(timer_cnt_regs[i]);
+        if (i != num_cnt_regs - 1) {
+          OutContent += ", ";
+        }
+      }
+      OutContent += "]";
+    }
     OutContent += ",\n";
 
-    OutContent += "\t\"timer_enable_action\": \"";
     if (!timer_enable_conds.empty()) {
-      std::cerr << "Timer Enable Action: \n";
-      z3::expr tmp = timer_enable_conds.size() == 1 ? timer_enable_conds.back()
-                                                    : z3::mk_or(timer_enable_conds);
-      std::cerr << tmp << "\n";
-      s.reset();
-      s.add(tmp);
-      std::cerr << s.check() << "\n";
-      std::cerr << s.get_model() << "\n";
-      std::string smt2dump = s.to_smt2();
-      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      if (!timer_cnt_regs.empty()) {
+        OutContent += "\t\"timer_enable_action\": [\n";
+        auto num_enable_conds = timer_enable_conds.size();
+        for (unsigned i = 0; i < num_enable_conds; ++i) {
+          s.reset();
+          s.add(timer_enable_conds[i]);
+          s.check();
+          std::string smt2dump = s.to_smt2();
+          OutContent += "\t\t\"";
+          OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+          OutContent += "\"";
+          if (i != num_enable_conds - 1) {
+            OutContent += ",";
+          }
+          OutContent += "\n";
+        }
+        OutContent += "\t],\n";
+      } else {
+        OutContent += "\t\"timer_enable_action\": \"";
+        std::cerr << "Timer Enable Action: \n";
+        z3::expr tmp = timer_enable_conds.size() == 1 ? timer_enable_conds.back()
+                                                      : z3::mk_or(timer_enable_conds);
+        std::cerr << tmp << "\n";
+        s.reset();
+        s.add(tmp);
+        std::cerr << s.check() << "\n";
+        std::cerr << s.get_model() << "\n";
+        std::string smt2dump = s.to_smt2();
+        OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+        OutContent += "\",\n";
+      }
     }
-    OutContent += "\",\n";
 
-    OutContent += "\t\"timer_disable_action\": \"";
     if (!timer_disable_conds.empty()) {
-      std::cerr << "Timer Disable Action: \n";
-      z3::expr tmp = timer_disable_conds.size() == 1 ? timer_disable_conds.back()
-                                                    : z3::mk_or(timer_disable_conds);
-      std::cerr << tmp << "\n";
-      s.reset();
-      s.add(tmp);
-      std::cerr << s.check() << "\n";
-      std::cerr << s.get_model() << "\n";
-      std::string smt2dump = s.to_smt2();
-      OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+      if (!timer_cnt_regs.empty()) {
+        OutContent += "\t\"timer_disable_action\": [\n";
+        auto num_disable_conds = timer_disable_conds.size();
+        for (unsigned i = 0; i < num_disable_conds; ++i) {
+          s.reset();
+          s.add(timer_disable_conds[i]);
+          s.check();
+          std::string smt2dump = s.to_smt2();
+          OutContent += "\t\t\"";
+          OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+          OutContent += "\"";
+          if (i != num_disable_conds - 1) {
+            OutContent += ",";
+          }
+          OutContent += "\n";
+        }
+        OutContent += "\t],\n";
+      } else {
+        OutContent += "\t\"timer_disable_action\": \"";
+        std::cerr << "Timer Disable Action: \n";
+        z3::expr tmp = timer_disable_conds.size() == 1 ? timer_disable_conds.back()
+                                                      : z3::mk_or(timer_disable_conds);
+        std::cerr << tmp << "\n";
+        s.reset();
+        s.add(tmp);
+        std::cerr << s.check() << "\n";
+        std::cerr << s.get_model() << "\n";
+        std::string smt2dump = s.to_smt2();
+        OutContent += std::regex_replace(smt2dump, LineBreak, "\\n");
+        OutContent += "\",\n";
+      }
     }
-    OutContent += "\",\n";
 
     OutContent += "\t\"timer_irq_cond\": \"";
     if (!timer_irq_conds.empty()) {
