@@ -79,7 +79,7 @@ peripheral_workload:
   -
     target: PIT
     use-perry: true
-    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_adapter_pit.c.obj
+    target-bitcode: ../../../../HAL-Collection/NXP/FRDM-K64F/perry-build/debug/fsl_pit.c.obj
     target-struct: PIT_Type
     constraint_file: perry-nxp-frdm-k64f-pit.json
   -
