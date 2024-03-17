@@ -2386,6 +2386,7 @@ static uint64_t {0}(void *opaque, hwaddr offset, unsigned size) {{
 """
 static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
 \t{1} *{2} = {3}(opaque);
+{8}
 
 \tswitch (offset) {{
 {7}
@@ -2606,6 +2607,9 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       self.periph_instance_name,
       idx)
       content += '\t\t\tbreak;\n'
+    make_unused = ''
+    if len(content) == 0:
+      make_unused = '\t(void){};\n'.format(self.periph_instance_name)
     body = body.format(
       self.write_func_name,
       self.struct_name,
@@ -2615,6 +2619,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       self.prefix_upper,
       self.name_upper,
       filter_content,
+      make_unused
     )
     return body
 
