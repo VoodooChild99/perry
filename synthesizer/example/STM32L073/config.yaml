@@ -134,7 +134,7 @@ board_config:
     -
       name: sram
       base: 0x20000000
-      size: 0x5000
+      size: 0x20000
       type: ram
 
   peripheral:

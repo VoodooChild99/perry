@@ -77,7 +77,7 @@ peripheral_workload:
 
 board_config:
   cpu: cortex-m0
-  machine_name: stm32f072_nucleo
+  machine_name: stm32f072
   clk_freq: 48000000
   num_irq: 47
   init_vtor: 0x08000000

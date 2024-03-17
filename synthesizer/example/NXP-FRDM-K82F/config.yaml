@@ -10,9 +10,8 @@ success-ret-file: ./succ-ret.yaml
 
 loop-file: ./loops.yaml
 
-# exclude-function:
-#   - UART_TransferGetSendCount
-#   - UART_SendAddress
+exclude-function:
+  - LPUART_TransferGetSendCount
 
 bitcode:
   - ../../../../HAL-Collection/NXP/FRDM-K82F/perry-build/debug/libhal-FRDM-K82F.bca
