@@ -2442,6 +2442,17 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         content += '\t\t\t{}->{} &= value;\n'.format(
           self.periph_instance_name, r.name
         )
+        if len(self.data_related_reg_offset) == 1:
+          # make sure data registers can always be written into
+          expr_set = set()
+          if self.write_constraint is not None:
+            expr_set = expr_set.union(self.__z3_expr_to_reg(self.write_constraint, True, do_filter=True))
+          if self.between_writes_constraint is not None:
+            expr_set = expr_set.union(self.__z3_expr_to_reg(self.between_writes_constraint, True, do_filter=True))
+          if self.post_writes_constraint is not None:
+            expr_set = expr_set.union(self.__z3_expr_to_reg(self.post_writes_constraint, True, do_filter=True))
+          for s in expr_set:
+            content += '\t\t\t{}\n'.format(s)
       elif self.is_gpio and self.gpio_regs is not None and r.address_offset in self.gpio_regs:
         pass
       else:
