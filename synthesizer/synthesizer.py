@@ -2388,6 +2388,11 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
 \t{1} *{2} = {3}(opaque);
 
 \tswitch (offset) {{
+{7}
+\t\tdefault: break;
+\t}}
+
+\tswitch (offset) {{
 {4}
 \t\tdefault:
 \t\t\tqemu_log_mask(LOG_GUEST_ERROR, \"{5} {6} write: bad offset %x\\n\", (int)offset);
@@ -2396,6 +2401,7 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
 }}
 """
     content = ''
+    filter_content = ''
     visited_offset = set()
     for r in self.regs:
       can_write = False
@@ -2420,8 +2426,15 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
         continue
       if self.all_in_one:
         content += '\t\tcase A_{}_{}:\n'.format(self.name_upper, r.name)
+        reg_base = 'A_{}_{}'.format(self.name_upper, r.name)
       else:
         content += '\t\tcase A_{}:\n'.format(r.name)
+        reg_base = 'A_{}'.format(r.name)
+      if r._size > 8:
+        filter_content += '\t\tcase {0} ... {0} + {1}:\n'.format(reg_base, r._size // 8 - 1)
+        filter_content += '\t\t\tvalue = value << ((offset - {}) << 3);\n'.format(reg_base)
+        filter_content += '\t\t\toffset = {};\n'.format(reg_base)
+        filter_content += '\t\t\tbreak;\n'
       if r.address_offset in self.data_related_reg_offset and CR_REGEX.fullmatch(r.name) is None:
         # these registers as considered as status registers, as a result,
         # bits of these registers should only be set by hardware
@@ -2600,7 +2613,8 @@ static void {0}(void *opaque, hwaddr offset, uint64_t value, unsigned size) {{
       self.full_name_upper,
       content,
       self.prefix_upper,
-      self.name_upper
+      self.name_upper,
+      filter_content,
     )
     return body
 
