@@ -1,69 +1,114 @@
-FROM klee/llvm:110_O_D_A_ubuntu_bionic-20200807 as llvm_base
-FROM klee/gtest:1.11.0_ubuntu_bionic-20200807 as gtest_base
-FROM klee/uclibc:klee_uclibc_v1.3_110_ubuntu_bionic-20200807 as uclibc_base
-FROM klee/tcmalloc:2.9.1_ubuntu_bionic-20200807 as tcmalloc_base
-FROM klee/stp:2.3.3_ubuntu_bionic-20200807 as stp_base
-FROM klee/z3:4.8.15_ubuntu_bionic-20200807 as z3_base
-FROM klee/libcxx:110_ubuntu_bionic-20200807 as libcxx_base
-FROM llvm_base as intermediate
-COPY --from=gtest_base /tmp /tmp/
-COPY --from=uclibc_base /tmp /tmp/
-COPY --from=tcmalloc_base /tmp /tmp/
-COPY --from=stp_base /tmp /tmp/
-COPY --from=z3_base /tmp /tmp/
-COPY --from=libcxx_base /tmp /tmp/
-ENV COVERAGE=0
-ENV USE_TCMALLOC=1
-ENV BASE=/tmp
-ENV LLVM_VERSION=11.0
-ENV ENABLE_DOXYGEN=1
-ENV ENABLE_OPTIMIZED=1
-ENV ENABLE_DEBUG=1
-ENV DISABLE_ASSERTIONS=0
-ENV REQUIRES_RTTI=0
-ENV SOLVERS=STP:Z3
-ENV GTEST_VERSION=1.11.0
-ENV UCLIBC_VERSION=klee_uclibc_v1.3
-ENV TCMALLOC_VERSION=2.9.1
-ENV SANITIZER_BUILD=
-ENV STP_VERSION=2.3.3
-ENV MINISAT_VERSION=master
-ENV Z3_VERSION=4.8.15
-ENV USE_LIBCXX=1
-ENV KLEE_RUNTIME_BUILD="Debug+Asserts"
-LABEL maintainer="KLEE Developers"
+FROM ubuntu:20.04
 
+ENV DEBIAN_FRONTEND noninteractive
 
-# TODO remove adding sudo package
-# Create ``klee`` user for container with password ``klee``.
-# and give it password-less sudo access (temporarily so we can use the CI scripts)
-RUN apt update && DEBIAN_FRONTEND=noninteractive apt -y --no-install-recommends install sudo emacs-nox vim-nox file python3-dateutil && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd -m klee && \
-    echo klee:klee | chpasswd && \
-    cp /etc/sudoers /etc/sudoers.bak && \
-    echo 'klee  ALL=(root) NOPASSWD: ALL' >> /etc/sudoers
+ENV TZ=Asia/Shanghai
 
-# Copy across source files needed for build
-COPY --chown=klee:klee . /tmp/klee_src/
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-USER klee
-WORKDIR /home/klee
-# Build and set klee user to be owner
-RUN /tmp/klee_src/scripts/build/build.sh --debug --install-system-deps klee && pip3 install flask wllvm && \
-    sudo rm -rf /var/lib/apt/lists/*
+RUN apt-get update
 
+RUN apt-get -y --allow-downgrades --allow-remove-essential --allow-change-held-packages install apt-utils
 
-ENV PATH="$PATH:/tmp/llvm-110-install_O_D_A/bin:/home/klee/klee_build/bin:/home/klee/.local/bin"
-ENV BASE=/tmp
+# Set the locale
+RUN apt-get -y --allow-downgrades --allow-remove-essential --allow-change-held-packages install locales
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
 
-# Add KLEE header files to system standard include folder
-RUN sudo /bin/bash -c 'ln -s /tmp/klee_src/include/klee /usr/include/'
+# Dependencies
+RUN apt-get update
+RUN apt-get -y --allow-downgrades --allow-remove-essential --allow-change-held-packages install \
+    build-essential cmake curl file g++-multilib gcc-multilib git libcap-dev \
+    libncurses5-dev libsqlite3-dev libtcmalloc-minimal4 python3-pip unzip \
+    graphviz doxygen wget lsb-release software-properties-common gnupg \
+    libtool autoconf python3-tabulate libglib2.0-dev libfdt-dev \
+    libpixman-1-dev zlib1g-dev ninja-build libcapstone-dev libncurses5 \
+    bluez psmisc
+RUN pip3 install lit wllvm loguru tomlkit
 
-ENV LD_LIBRARY_PATH /home/klee/klee_build/lib/
+# Python
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
-# Add KLEE binary directory to PATH
-RUN /bin/bash -c 'ln -s ${BASE}/klee_src /home/klee/ && ln -s ${BASE}/klee_build* /home/klee/klee_build'
+# Set git Proxy
+RUN if [ -n $HTTPS_PROXY ]; then \
+        git config --global http.proxy $HTTPS_PROXY && \
+        git config --global https.proxy $HTTPS_PROXY \
+    ; fi
 
-# TODO Remove when STP is fixed
-RUN /bin/bash -c 'echo "export LD_LIBRARY_PATH=$(cd ${BASE}/metaSMT-*-deps/stp-git-basic/lib/ && pwd):$LD_LIBRARY_PATH" >> /home/klee/.bashrc'
+# Dependencies
+RUN cd /root && \
+    git clone https://github.com/gperftools/gperftools.git && \
+    cd gperftools && git checkout gperftools-2.15 && \
+    ./autogen.sh && ./configure && make -j$(nproc) && make install
+RUN cd /root && \
+    wget https://developer.arm.com/-/media/Files/downloads/gnu-rm/10.3-2021.10/gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2 -O arm-gnu-toolchain-x86_64-arm-none-eabi.tar.bz2 && \
+    tar -jxvf arm-gnu-toolchain-x86_64-arm-none-eabi.tar.bz2
+ENV PATH ${PATH}:/root/gcc-arm-none-eabi-10.3-2021.10/bin
+
+# LLVM 13
+RUN cd /root && \
+    wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 13 all
+
+# Z3
+RUN cd /root && \
+    git clone https://github.com/Z3Prover/z3.git && \
+    cd z3 && \
+    git checkout z3-4.13.0 && \
+    mkdir build && cd build && \
+    cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../ && \
+    make -j$(nproc) && make install
+
+# AFL
+RUN cd /root && \
+    git clone https://github.com/google/AFL.git && \
+    cd AFL && make -j$(nproc)
+
+# QEMU-FUZZ
+RUN cd /root && \
+    git clone https://github.com/VoodooChild99/qemu-system-fuzzing.git && \
+    cd qemu-system-fuzzing && chmod +x qemu-config.sh && \
+    ./qemu-config.sh && cd build && make -j$(nproc)
+
+# QEMU-EMULATION
+COPY qemu-config.sh /root/qemu-config.sh
+RUN cd /root && \
+    git clone https://github.com/qemu/qemu.git && \
+    cd qemu && git checkout v7.2.0 && \
+    cp ../qemu-config.sh ./qemu-config.sh && \
+    chmod +x qemu-config.sh && ./qemu-config.sh && \
+    cd build && make -j$(nproc)
+
+# Perry Artifacts
+RUN cd /root && \
+    git clone https://github.com/VoodooChild99/perry-experiments.git
+
+# Perry Clang plugin
+RUN cd /root && \
+    git clone https://github.com/VoodooChild99/perry-clang-plugin && \
+    cd perry-clang-plugin && \
+    LLVM_CONFIG=llvm-config-13 ./cmake-config.sh && \
+    cd build && make -j$(nproc)
+
+# Perry
+RUN cd /root && \
+    git clone https://github.com/VoodooChild99/perry.git && \
+    cd perry && git checkout dev && \
+    LLVM_CONFIG=llvm-config-13 Z3_INSTALL_PATH=/usr/local ./cmake-config.sh && \
+    cd build && make -j$(nproc) && \
+    cd ../synthesizer && pip install -r requirements.txt
+
+# Drivers
+RUN cd /root && \
+    git clone https://github.com/VoodooChild99/perry-drivers.git HAL-Collection && \
+    cd HAL-Collection && \
+    PERRY_DIR=/root/perry PERRY_CLANG_PATH=/root/perry-clang-plugin/build/compiler LLVM_CONFIG=llvm-config-13 ./build_all.sh
+
+# Unset git proxy
+RUN if [ -n $HTTPS_PROXY ]; then \
+        git config --global --unset http.proxy && \
+        git config --global --unset https.proxy \
+    ; fi
