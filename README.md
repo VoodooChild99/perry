@@ -1,27 +1,67 @@
-KLEE Symbolic Virtual Machine
-=============================
+# Perry
 
-[![Build Status](https://github.com/klee/klee/workflows/CI/badge.svg)](https://github.com/klee/klee/actions?query=workflow%3ACI)
-[![Build Status](https://api.cirrus-ci.com/github/klee/klee.svg)](https://cirrus-ci.com/github/klee/klee)
-[![Coverage](https://codecov.io/gh/klee/klee/branch/master/graph/badge.svg)](https://codecov.io/gh/klee/klee)
+Perry is a tool to automatically generate hardware models from corresponding hardware drivers. Please refer to our USENIX Security'24 paper for more details.
 
-`KLEE` is a symbolic virtual machine built on top of the LLVM compiler
-infrastructure. Currently, there are two primary components:
+## Environment
+Perry is tested under the following environment:
+* Ubuntu 20.04
+* LLVM/Clang 13
+* Z3 4.11.0 or above
 
-  1. The core symbolic virtual machine engine; this is responsible for
-     executing LLVM bitcode modules with support for symbolic
-     values. This is comprised of the code in lib/.
+## Build With Docker
+We recommend building Perry with Docker.
 
-  2. A POSIX/Linux emulation layer oriented towards supporting uClibc,
-     with additional support for making parts of the operating system
-     environment symbolic.
+Execute the following command to build the image. In case you need a proxy, set the environment variable `PROXY_ADDRESS`:
+```shell
+# PROXY_ADDRESS=http://xx.xx.xx.xx:xx
+./build_docker.sh
+```
+> This will build a docker image `"perry"` which contains all the necessary materials to execute Perry and reproduce our experiments.
 
-Additionally, there is a simple library for replaying computed inputs
-on native code (for closed programs). There is also a more complicated
-infrastructure for replaying the inputs generated for the POSIX/Linux
-emulation layer, which handles running native programs in an
-environment that matches a computed test input, including setting up
-files, pipes, environment variables, and passing command line
-arguments.
+To launch the container:
+```shell
+./run_docker.sh
+```
+> A container `"perry"` will be created the first time you execute the script. You should be able to see a shell spawned within the container. The container is still running even if you exit from the shell, which means that you can always spawn a new shell by executing the script later.
 
-For further information, see the [webpage](http://klee.github.io/).
+All materials are places under the `/root` directory of the container:
+
+| Path | Description |
+| :--- | :--- |
+| `/root/perry` | Perry source code and binaries |
+| `/root/perry-clang-plugin` | [Perry Clang plugin source code]((https://github.com/VoodooChild99/perry-clang-plugin)) and binaries |
+| `/root/perry-experiments` | [Artifacts to reproduce Perry's experiments]((https://github.com/VoodooChild99/perry-experiments)) |
+| `/root/HAL-Collection` | [Drivers used in Perry's experiments]((https://github.com/VoodooChild99/perry-drivers)) |
+| `/root/qemu` | QEMU v7.2 source code and binaries, used to emulate firmware |
+| `/root/qemu-system-fuzzing` | [Source code of our QEMU fork]((https://github.com/VoodooChild99/qemu-system-fuzzing)), used to fuzz firmware |
+| `/root/AFL` | AFL source code and binaries, used to fuzz firmware |
+| `/root/gcc-arm-none-eabi-10.3-2021.10` | GNU Arm embedded toolchain, used to compile drivers |
+| `/root/gperftools` and `/root/z3` | Dependencies of Perry/KLEE |
+
+## Usage
+To synthesize hardware models with Perry, run the following commands:
+```shell
+python synthesizer/synthesize.py [-c CONFIG-FILE] [-o OUTPUT-DIR] [-a]
+```
+* `-c CONFIG-FILE`: YAML-format config file for the synthesizer. For an example, please refer to `synthesizer/example/*/config.yaml` (e.g., [`synthesizer/example/STM32F103/config.yaml`](./synthesizer/example/STM32F103/config.yaml)).
+* `-o OUTPUT-DIR`: Where to write the generated model. (default to stdout if not specified)
+* `-a`: Output everything within a single file so that you can easily integrate the model into QEMU. If not set, models for the board and each peripheral are splitted into multiple files.
+
+## Supporting New MCUs
+Currently supported MCUs are listed in [`synthesizer/example`](./synthesizer/example). The following steps are required to support a new MCU:
+1. Compile drivers for the MCU with [Perry Clang plugin](https://github.com/VoodooChild99/perry-clang-plugin) to collect auxiliary information and generate LLVM bitcode files.
+2. Write a configuration file for the MCU. Please refer to `synthesizer/example/*/config.yaml` (e.g., [`synthesizer/example/STM32F103/config.yaml`](./synthesizer/example/STM32F103/config.yaml)) for how to write a configuration file.
+3. Execute Perry using the configuration file.
+
+## Replicating Our Experiments
+Please refer to the [perry-experiments repository](https://github.com/VoodooChild99/perry-experiments) for more details.
+
+## Citing The Papaer
+```
+@inproceedings {LEI::SEC24::PERRY,
+    title = {A Friend’s Eye is A Good Mirror: Synthesizing MCU Peripheral Models from Peripheral Drivers},
+    booktitle = {33rd USENIX Security Symposium (USENIX Security)},
+    year = {2024},
+    author={Chongqing Lei and Zhen Ling and Yue Zhang and Yan Yang and Junzhou Luo and Xinwen Fu}
+}
+```
