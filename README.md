@@ -29,7 +29,7 @@ All materials are places under the `/root` directory of the container:
 | Path | Description |
 | :--- | :--- |
 | `/root/perry` | Perry source code and binaries |
-| `/root/perry-clang-plugin` | [Perry Clang plugin source code]((https://github.com/VoodooChild99/perry-clang-plugin)) and binaries |
+| `/root/perry-clang-plugin` | [Perry Clang plugin and compiler wrapper source code]((https://github.com/VoodooChild99/perry-clang-plugin)) and binaries |
 | `/root/perry-experiments` | [Artifacts to reproduce Perry's experiments]((https://github.com/VoodooChild99/perry-experiments)) |
 | `/root/HAL-Collection` | [Drivers used in Perry's experiments]((https://github.com/VoodooChild99/perry-drivers)) |
 | `/root/qemu` | QEMU v7.2 source code and binaries, used to emulate firmware |
@@ -49,7 +49,7 @@ python synthesizer/synthesize.py [-c CONFIG-FILE] [-o OUTPUT-DIR] [-a]
 
 ## Supporting New MCUs
 Currently supported MCUs are listed in [`synthesizer/example`](./synthesizer/example). The following steps are required to support a new MCU:
-1. Compile drivers for the MCU with [Perry Clang plugin](https://github.com/VoodooChild99/perry-clang-plugin) to collect auxiliary information and generate LLVM bitcode files.
+1. Compile drivers for the MCU with our [Perry Clang plugin and compiler wrapper](https://github.com/VoodooChild99/perry-clang-plugin) to collect auxiliary information and generate LLVM bitcode files. Please refer to the `README` file in the repo for how to use them.
 2. Write a configuration file for the MCU. Please refer to `synthesizer/example/*/config.yaml` (e.g., [`synthesizer/example/STM32F103/config.yaml`](./synthesizer/example/STM32F103/config.yaml)) for how to write a configuration file.
 3. Execute Perry using the configuration file.
 
