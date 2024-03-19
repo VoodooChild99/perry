@@ -26,7 +26,7 @@ RUN apt-get -y --allow-downgrades --allow-remove-essential --allow-change-held-p
     libtool autoconf python3-tabulate libglib2.0-dev libfdt-dev \
     libpixman-1-dev zlib1g-dev ninja-build libcapstone-dev libncurses5 \
     bluez psmisc
-RUN pip3 install lit wllvm loguru tomlkit
+RUN pip3 install lit wllvm loguru tomlkit scapy
 
 # Python
 RUN ln -s /usr/bin/python3 /usr/bin/python

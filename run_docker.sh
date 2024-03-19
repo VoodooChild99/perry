@@ -11,6 +11,9 @@ RUN_FLAGS="
 --name $CONTAINER_NAME \
 --network host \
 --security-opt seccomp=unconfined \
+-v /dev:/dev \
+-v /run/dbus:/run/dbus \
+-v /var/run/dbus:/var/run/dbus \
 "
 
 run_docker() {
