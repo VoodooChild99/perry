@@ -29,11 +29,11 @@ All materials are places under the `/root` directory of the container:
 | Path | Description |
 | :--- | :--- |
 | `/root/perry` | Perry source code and binaries |
-| `/root/perry-clang-plugin` | [Perry Clang plugin and compiler wrapper source code]((https://github.com/VoodooChild99/perry-clang-plugin)) and binaries |
-| `/root/perry-experiments` | [Artifacts to reproduce Perry's experiments]((https://github.com/VoodooChild99/perry-experiments)) |
-| `/root/HAL-Collection` | [Drivers used in Perry's experiments]((https://github.com/VoodooChild99/perry-drivers)) |
+| `/root/perry-clang-plugin` | [Perry Clang plugin and compiler wrapper source code](https://github.com/VoodooChild99/perry-clang-plugin) and binaries |
+| `/root/perry-experiments` | [Artifacts to reproduce Perry's experiments](https://github.com/VoodooChild99/perry-experiments) |
+| `/root/HAL-Collection` | [Drivers used in Perry's experiments](https://github.com/VoodooChild99/perry-drivers) |
 | `/root/qemu` | QEMU v7.2 source code and binaries, used to emulate firmware |
-| `/root/qemu-system-fuzzing` | [Source code of our QEMU fork]((https://github.com/VoodooChild99/qemu-system-fuzzing)), used to fuzz firmware |
+| `/root/qemu-system-fuzzing` | [Source code of our QEMU fork](https://github.com/VoodooChild99/qemu-system-fuzzing), used to fuzz firmware |
 | `/root/AFL` | AFL source code and binaries, used to fuzz firmware |
 | `/root/gcc-arm-none-eabi-10.3-2021.10` | GNU Arm embedded toolchain, used to compile drivers |
 | `/root/gperftools` and `/root/z3` | Dependencies of Perry/KLEE |
