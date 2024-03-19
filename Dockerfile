@@ -96,7 +96,7 @@ RUN cd /root && \
 # Perry
 RUN cd /root && \
     git clone https://github.com/VoodooChild99/perry.git && \
-    cd perry && git checkout dev && \
+    cd perry && git checkout master && \
     LLVM_CONFIG=llvm-config-13 Z3_INSTALL_PATH=/usr/local ./cmake-config.sh && \
     cd build && make -j$(nproc) && \
     cd ../synthesizer && pip install -r requirements.txt

@@ -45,7 +45,7 @@ synthesizer/example/*/loops.yaml
 synthesizer/example/*/periph-struct.yaml
 synthesizer/example/*/succ-ret.yaml
 synthesizer/exp-*
-
+perry-*.json
 
 profile
 klee-out-*
