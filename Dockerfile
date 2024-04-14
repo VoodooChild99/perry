@@ -32,9 +32,9 @@ RUN pip3 install lit wllvm loguru tomlkit scapy
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Set git Proxy
-RUN if [ -n $HTTPS_PROXY ]; then \
-        git config --global http.proxy $HTTPS_PROXY && \
-        git config --global https.proxy $HTTPS_PROXY \
+RUN if [ -n "$HTTPS_PROXY" ]; then \
+        git config --global http.proxy "$HTTPS_PROXY" && \
+        git config --global https.proxy "$HTTPS_PROXY" \
     ; fi
 
 # Dependencies
@@ -108,7 +108,7 @@ RUN cd /root && \
     PERRY_DIR=/root/perry PERRY_CLANG_PATH=/root/perry-clang-plugin/build/compiler LLVM_CONFIG=llvm-config-13 ./build_all.sh
 
 # Unset git proxy
-RUN if [ -n $HTTPS_PROXY ]; then \
+RUN if [ -n "$HTTPS_PROXY" ]; then \
         git config --global --unset http.proxy && \
         git config --global --unset https.proxy \
     ; fi
