@@ -38,6 +38,16 @@ All materials are places under the `/root` directory of the container:
 | `/root/gcc-arm-none-eabi-10.3-2021.10` | GNU Arm embedded toolchain, used to compile drivers |
 | `/root/gperftools` and `/root/z3` | Dependencies of Perry/KLEE |
 
+## Use the Pre-Built Docker Image
+In case you cannot build a image, we provide a [pre-built docker image on Docker Hub](https://hub.docker.com/repository/docker/ray999/perry/general). Execute the following command to use it:
+```shell
+docker rmi perry:latest
+docker pull ray999/perry
+docker tag ray999/perry perry:latest
+cd perry
+./run_docker.sh
+```
+
 ## Usage
 To synthesize hardware models with Perry, run the following commands:
 ```shell
