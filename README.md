@@ -39,7 +39,7 @@ All materials are places under the `/root` directory of the container:
 | `/root/gperftools` and `/root/z3` | Dependencies of Perry/KLEE |
 
 ## Use the Pre-Built Docker Image
-In case you cannot build a image, we provide a [pre-built docker image on Docker Hub](https://hub.docker.com/repository/docker/ray999/perry/general). Execute the following command to use it:
+In case you cannot build a image, we provide a [pre-built docker image on Docker Hub](https://hub.docker.com/r/ray999/perry). Execute the following command to use it:
 ```shell
 docker rmi perry:latest
 docker pull ray999/perry
