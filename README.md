@@ -1,6 +1,6 @@
 # Perry
 
-Perry is a tool to automatically generate hardware models from corresponding hardware drivers. Please refer to our USENIX Security'24 paper for more details: *"A Friend's Eye is A Good Mirror: Synthesizing MCU Peripheral Models from Peripheral Drivers"*.
+Perry is a tool to automatically generate hardware models from corresponding hardware drivers. Please refer to our USENIX Security'24 paper for more details: [*"A Friend's Eye is A Good Mirror: Synthesizing MCU Peripheral Models from Peripheral Drivers"*](https://www.usenix.org/conference/usenixsecurity24/presentation/lei).
 
 ## Environment
 Perry is tested under the following environment:
