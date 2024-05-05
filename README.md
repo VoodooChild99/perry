@@ -8,7 +8,7 @@ Perry is tested under the following environment:
 * LLVM/Clang 13
 * Z3 4.11.0 or above
 
-## Build With Docker
+## Building With Docker
 We recommend building Perry with Docker.
 
 Execute the following command to build the image. In case you need a proxy, set the environment variable `PROXY_ADDRESS`:
@@ -38,7 +38,7 @@ All materials are places under the `/root` directory of the container:
 | `/root/gcc-arm-none-eabi-10.3-2021.10` | GNU Arm embedded toolchain, used to compile drivers |
 | `/root/gperftools` and `/root/z3` | Dependencies of Perry/KLEE |
 
-## Use the Pre-Built Docker Image
+## Using the Pre-Built Docker Image
 In case you cannot build a image, we provide a [pre-built docker image on Docker Hub](https://hub.docker.com/r/ray999/perry). Execute the following command to use it:
 ```shell
 docker rmi perry:latest
