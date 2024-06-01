@@ -68,10 +68,10 @@ Please refer to the [perry-experiments repository](https://github.com/VoodooChil
 
 ## Citing The Papaer
 ```
-@inproceedings {LEI::SEC24::PERRY,
-    title = {A Friend’s Eye is A Good Mirror: Synthesizing MCU Peripheral Models from Peripheral Drivers},
-    booktitle = {33rd USENIX Security Symposium (USENIX Security)},
+@inproceedings {Lei::Perry::Sec24,
+    author={Chongqing Lei and Zhen Ling and Yue Zhang and Yan Yang and Junzhou Luo and Xinwen Fu},
+    title = {A Friend’s Eye is A Good Mirror: Synthesizing {MCU} Peripheral Models from Peripheral Drivers},
+    booktitle = {Proceedings of the 33rd USENIX Security Symposium (USENIX Security)},
     year = {2024},
-    author={Chongqing Lei and Zhen Ling and Yue Zhang and Yan Yang and Junzhou Luo and Xinwen Fu}
 }
 ```
